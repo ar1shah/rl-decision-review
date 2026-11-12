@@ -190,6 +190,29 @@ def compute_clock(
     return clock, is_ot
 
 
+def clock_run(clock: np.ndarray, is_overtime: np.ndarray, is_live: np.ndarray) -> np.ndarray:
+    """Per-frame index of the stretch of live play within one clock second (0, 1, ...).
+
+    After a goal the kickoff restarts at the same clock, which stays frozen until the kickoff
+    touch, so one clock second can hold several separate stretches of live play. Run 0 is the
+    first stretch in that second, run 1 the next (e.g. the kickoff after a goal). Dead frames
+    (countdown, post-goal) keep the run of the last stretch before them (0 if none yet).
+    """
+    clock = np.asarray(clock)
+    ot = np.asarray(is_overtime, dtype=bool)
+    live = np.asarray(is_live, dtype=bool)
+    n = len(clock)
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+    new_group = np.r_[True, (clock[1:] != clock[:-1]) | (ot[1:] != ot[:-1])]
+    prev_live = np.r_[False, live[:-1]]
+    starts = live & (~prev_live | new_group)
+    group_id = np.cumsum(new_group) - 1
+    total = np.cumsum(starts)
+    before_group = np.r_[0, total[:-1]][new_group][group_id]  # starts before each group
+    return np.maximum(total - before_group - 1, 0).astype(np.int64)
+
+
 # --------------------------------------------------------------------------- tables
 
 CAR_FLAGS = (
@@ -212,16 +235,20 @@ _DEMO_NULLED = ("pos", "vel", "ang", "quat", "boost")
 class ParsedReplay:
     """Normalized tables for one replay.
 
-    frames   : one row per raw network frame (time, clock, game state, is_live, is_overtime)
+    frames   : one row per raw network frame (time, clock, game state, is_live, is_overtime,
+               run)
     entities : long format, one row per (frame, entity); entity is "ball" or a player key
     players  : player_key, name, team, platform, car
     meta     : replay-level facts (map, team size, score, forfeit, overtime source)
+    events   : discrete events (goals, demos, kickoffs, pickups, ...); see rldr.parse.events.
+               Filled by load_replay; None when built with build_replay alone.
     """
 
     frames: pd.DataFrame
     entities: pd.DataFrame
     players: pd.DataFrame
     meta: dict[str, Any]
+    events: pd.DataFrame | None = None
 
     def at_clock(self, clock: str, live_only: bool = True) -> pd.DataFrame:
         """Entity rows (plus frame info and player name) for one clock second, e.g. '3:06'.
@@ -231,15 +258,14 @@ class ParsedReplay:
 
         One clock second can cover several separate stretches of play: after a goal the
         kickoff restarts at the same clock, and the clock stays frozen until the kickoff touch.
-        The `run` column (0, 1, ...) numbers those contiguous stretches in frame order, so
-        run 0 of a goal's clock is the play before the goal and run 1 is the next kickoff.
+        The `run` column (0, 1, ...) numbers those live stretches in frame order, so run 0 of a
+        goal's clock is the play before the goal and run 1 is the next kickoff (see clock_run).
         """
         seconds, overtime = parse_clock(clock)
         f = self.frames
         sel = f[(f["clock"] == seconds) & (f["is_overtime"] == overtime)]
         if live_only:
             sel = sel[sel["is_live"]]
-        sel = sel.assign(run=(sel["frame"].diff() != 1).cumsum() - 1)
         out = sel.merge(self.entities, on="frame", how="inner")
         names = dict(zip(self.players["player_key"], self.players["name"], strict=True))
         names["ball"] = "ball"
@@ -400,6 +426,7 @@ def build_replay(replay_id: str, raw: dict[str, Any], fd: dict[str, Any]) -> Par
         )
         ot_source = "fallback" if ot_start is not None else None
     clock, is_ot = compute_clock(secs, states, times, ot_start)
+    is_live = states == LIVE_STATE
 
     frames = pd.DataFrame(
         {
@@ -408,8 +435,9 @@ def build_replay(replay_id: str, raw: dict[str, Any], fd: dict[str, Any]) -> Par
             "seconds_remaining": secs,
             "clock": clock,
             "game_state": pd.Categorical(states.astype(str)),
-            "is_live": states == LIVE_STATE,
+            "is_live": is_live,
             "is_overtime": is_ot,
+            "run": clock_run(clock, is_ot, is_live),
         }
     )
 
@@ -452,8 +480,12 @@ def build_replay(replay_id: str, raw: dict[str, Any], fd: dict[str, Any]) -> Par
 
 
 def load_replay(path: str | Path) -> ParsedReplay:
-    """Parse a .replay file into normalized tables (see ParsedReplay)."""
+    """Parse a .replay file into normalized tables (see ParsedReplay), including events."""
+    from rldr.parse.events import build_events  # events builds on this module
+
     path = Path(path)
     raw = sa.parse_replay(path.read_bytes())
     fd = sa.get_replay_frames_data(str(path))
-    return build_replay(path.stem, raw, fd)
+    parsed = build_replay(path.stem, raw, fd)
+    parsed.events = build_events(parsed, fd)
+    return parsed
