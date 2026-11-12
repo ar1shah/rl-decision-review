@@ -8,9 +8,13 @@ refers to. See ROADMAP 1.1 / 1.2 Notes for the data quirks handled below.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
+import subtr_actor as sa
 
 BOOST_RAW_MAX = 255.0
 LIVE_STATE = "Active"
@@ -184,3 +188,272 @@ def compute_clock(
         elapsed = np.nan_to_num(running, nan=0.0)
     clock[is_ot] = np.floor(np.maximum(elapsed[is_ot], 0.0)).astype(np.int64)
     return clock, is_ot
+
+
+# --------------------------------------------------------------------------- tables
+
+CAR_FLAGS = (
+    "boost_active",
+    "jump_active",
+    "dodge_active",
+    "double_jump_active",
+    "powerslide_active",
+)
+ENTITY_COLUMNS = (
+    ["frame", "entity", "team"]
+    + ["x", "y", "z", "vx", "vy", "vz", "wx", "wy", "wz", "qw", "qx", "qy", "qz"]
+    + ["yaw", "pitch", "roll", "boost", *CAR_FLAGS, "sleeping", "is_present", "is_demolished"]
+)
+# Car state that is meaningless while demolished (frozen at the demo spot, boost draining).
+_DEMO_NULLED = ("pos", "vel", "ang", "quat", "boost")
+
+
+@dataclass
+class ParsedReplay:
+    """Normalized tables for one replay.
+
+    frames   : one row per raw network frame (time, clock, game state, is_live, is_overtime)
+    entities : long format, one row per (frame, entity); entity is "ball" or a player key
+    players  : player_key, name, team, platform, car
+    meta     : replay-level facts (map, team size, score, forfeit, overtime source)
+    """
+
+    frames: pd.DataFrame
+    entities: pd.DataFrame
+    players: pd.DataFrame
+    meta: dict[str, Any]
+
+    def at_clock(self, clock: str, live_only: bool = True) -> pd.DataFrame:
+        """Entity rows (plus frame info and player name) for one clock second, e.g. '3:06'.
+
+        The in-game clock shows each second for ~30 frames, so this returns every frame in
+        that second. `live_only` drops countdown / post-goal frames that share the clock.
+
+        One clock second can cover several separate stretches of play: after a goal the
+        kickoff restarts at the same clock, and the clock stays frozen until the kickoff touch.
+        The `run` column (0, 1, ...) numbers those contiguous stretches in frame order, so
+        run 0 of a goal's clock is the play before the goal and run 1 is the next kickoff.
+        """
+        seconds, overtime = parse_clock(clock)
+        f = self.frames
+        sel = f[(f["clock"] == seconds) & (f["is_overtime"] == overtime)]
+        if live_only:
+            sel = sel[sel["is_live"]]
+        sel = sel.assign(run=(sel["frame"].diff() != 1).cumsum() - 1)
+        out = sel.merge(self.entities, on="frame", how="inner")
+        names = dict(zip(self.players["player_key"], self.players["name"], strict=True))
+        names["ball"] = "ball"
+        out.insert(out.columns.get_loc("entity") + 1, "name", out["entity"].astype(str).map(names))
+        return out
+
+
+def _variant_data(frame: Any) -> dict[str, Any] | None:
+    """The payload of a serialized `{"Data": {...}}` frame, or None for "Empty" etc."""
+    return frame.get("Data") if isinstance(frame, dict) else None
+
+
+def _vec3(v: dict[str, float] | None) -> tuple[float, float, float]:
+    return (np.nan, np.nan, np.nan) if v is None else (v["x"], v["y"], v["z"])
+
+
+def _rigid_bodies(frames: Sequence[Any]) -> dict[str, np.ndarray]:
+    """Rigid body arrays for one entity's frames. Empty frames and null fields become NaN."""
+    n = len(frames)
+    out = {
+        "pos": np.full((n, 3), np.nan),
+        "vel": np.full((n, 3), np.nan),
+        "ang": np.full((n, 3), np.nan),
+        "quat": np.full((n, 4), np.nan),
+        "sleeping": np.zeros(n, dtype=bool),
+        "has_data": np.zeros(n, dtype=bool),
+    }
+    for i, frame in enumerate(frames):
+        data = _variant_data(frame)
+        if data is None:
+            continue
+        rb = data["rigid_body"]
+        out["has_data"][i] = True
+        out["pos"][i] = _vec3(rb["location"])
+        out["vel"][i] = _vec3(rb.get("linear_velocity"))
+        out["ang"][i] = _vec3(rb.get("angular_velocity"))
+        r = rb.get("rotation")
+        if r is not None:
+            out["quat"][i] = (r["w"], r["x"], r["y"], r["z"])
+        out["sleeping"][i] = bool(rb.get("sleeping"))
+    return out
+
+
+def _nullable_bool(values: np.ndarray, valid: np.ndarray) -> pd.arrays.BooleanArray:
+    """Boolean column that is NA where `valid` is False."""
+    return pd.arrays.BooleanArray(np.asarray(values, dtype=bool), ~np.asarray(valid, dtype=bool))
+
+
+def _entity_frame(
+    entity: str, team: int | None, rb: dict[str, np.ndarray], extra: dict[str, Any]
+) -> pd.DataFrame:
+    n = len(rb["has_data"])
+    yaw, pitch, roll = quat_to_euler(*rb["quat"].T)
+    cols: dict[str, Any] = {
+        "frame": np.arange(n, dtype=np.int64),
+        "entity": [entity] * n,
+        "team": pd.array([team] * n, dtype="Int8"),
+    }
+    for key, names in (
+        ("pos", ("x", "y", "z")),
+        ("vel", ("vx", "vy", "vz")),
+        ("ang", ("wx", "wy", "wz")),
+        ("quat", ("qw", "qx", "qy", "qz")),
+    ):
+        for j, col in enumerate(names):
+            cols[col] = rb[key][:, j]
+    cols |= {"yaw": yaw, "pitch": pitch, "roll": roll}
+    cols |= extra
+    return pd.DataFrame(cols)
+
+
+def _ball_entity(ball_frames: Sequence[Any]) -> pd.DataFrame:
+    rb = _rigid_bodies(ball_frames)
+    # Velocities are null while the ball sleeps (kickoff spawn, post-goal): it isn't moving.
+    for key in ("vel", "ang"):
+        rb[key][rb["has_data"] & np.isnan(rb[key]).any(axis=1)] = 0.0
+    n = len(ball_frames)
+    no_flags = np.zeros(n, dtype=bool)
+    extra = {
+        "boost": np.full(n, np.nan),
+        **{flag: _nullable_bool(no_flags, no_flags) for flag in CAR_FLAGS},
+        "sleeping": _nullable_bool(rb["sleeping"], rb["has_data"]),
+        "is_present": rb["has_data"],
+        "is_demolished": np.zeros(n, dtype=bool),
+    }
+    return _entity_frame("ball", None, rb, extra)
+
+
+def _car_entity(
+    key: str, team: int, car_frames: Sequence[Any], demo_frames: Sequence[int]
+) -> pd.DataFrame:
+    n = len(car_frames)
+    rb = _rigid_bodies(car_frames)
+    demolished = demolished_mask(n, demo_frames, rb["has_data"], rb["sleeping"])
+    present = presence_mask(rb["has_data"], demolished)
+    valid = rb["has_data"] & ~demolished  # frames whose recorded car state we trust
+
+    boost_raw = np.full(n, np.nan)
+    flags = {flag: np.zeros(n, dtype=bool) for flag in CAR_FLAGS}
+    for i, frame in enumerate(car_frames):
+        data = _variant_data(frame)
+        if data is None:
+            continue
+        boost_raw[i] = data.get("boost_amount", np.nan)
+        for flag in CAR_FLAGS:
+            flags[flag][i] = bool(data.get(flag))
+    rb["boost"] = boost_to_pct(boost_raw)
+    for field in _DEMO_NULLED:
+        rb[field][demolished] = np.nan
+
+    extra = {
+        "boost": rb["boost"],
+        **{flag: _nullable_bool(v, valid) for flag, v in flags.items()},
+        "sleeping": _nullable_bool(rb["sleeping"], rb["has_data"]),
+        "is_present": present,
+        "is_demolished": demolished,
+    }
+    return _entity_frame(key, team, rb, extra)
+
+
+def _players_table(meta: dict[str, Any]) -> pd.DataFrame:
+    rows = []
+    for team, side in ((0, "team_zero"), (1, "team_one")):
+        for p in meta[side]:
+            key = player_key(p["remote_id"])
+            rows.append(
+                {
+                    "player_key": key,
+                    "name": p["name"],
+                    "team": team,
+                    "platform": platform_of(key),
+                    "car": p.get("car_hitbox_family"),
+                }
+            )
+    players = pd.DataFrame(rows, columns=["player_key", "name", "team", "platform", "car"])
+    return players.astype({"team": "int8"})
+
+
+def build_replay(replay_id: str, raw: dict[str, Any], fd: dict[str, Any]) -> ParsedReplay:
+    """Build the tables from `sa.parse_replay(bytes)` and `sa.get_replay_frames_data(path)`."""
+    names = raw["names"]
+    md = fd["frame_data"]["metadata_frames"]
+    n = len(md)
+    times = np.array([m["time"] for m in md], dtype=float)
+    secs = np.array([m["seconds_remaining"] for m in md], dtype=np.int64)
+    state_ids = [m["replicated_game_state_name"] for m in md]
+    states = np.array([names[s] if s is not None else "Unknown" for s in state_ids], dtype=object)
+
+    goals = fd["goal_events"]
+    ot_start = overtime_flag_frame(raw["network_frames"]["frames"], raw["objects"])
+    ot_source = "flag" if ot_start is not None else None
+    if ot_start is None:
+        ot_start = overtime_fallback_frame(
+            secs,
+            states,
+            [g["frame"] for g in goals],
+            [g["scoring_team_is_team_0"] for g in goals],
+        )
+        ot_source = "fallback" if ot_start is not None else None
+    clock, is_ot = compute_clock(secs, states, times, ot_start)
+
+    frames = pd.DataFrame(
+        {
+            "frame": np.arange(n, dtype=np.int64),
+            "time": times,
+            "seconds_remaining": secs,
+            "clock": clock,
+            "game_state": pd.Categorical(states.astype(str)),
+            "is_live": states == LIVE_STATE,
+            "is_overtime": is_ot,
+        }
+    )
+
+    players = _players_table(fd["meta"])
+    team_of = dict(zip(players["player_key"], players["team"], strict=True))
+    demos: dict[str, list[int]] = {}
+    for d in fd["demolish_infos"]:
+        demos.setdefault(player_key(d["victim"]), []).append(int(d["frame"]))
+
+    parts = [_ball_entity(fd["frame_data"]["ball_data"]["frames"])]
+    for remote_id, pdata in fd["frame_data"]["players"]:
+        key = player_key(remote_id)
+        if key not in team_of:  # not in the roster meta: use the per-frame team flag
+            first = next(d for d in map(_variant_data, pdata["frames"]) if d is not None)
+            team_of[key] = 0 if first["is_team_0"] else 1
+        parts.append(_car_entity(key, int(team_of[key]), pdata["frames"], demos.get(key, [])))
+    for part in parts:
+        if len(part) != n:
+            raise ValueError(f"{part['entity'].iloc[0]}: {len(part)} frames, expected {n}")
+
+    order = ["ball", *players["player_key"]]
+    order += sorted({p["entity"].iloc[0] for p in parts} - set(order))
+    entities = pd.concat(parts, ignore_index=True)
+    entities["entity"] = pd.Categorical(entities["entity"], categories=order)
+    entities = entities.sort_values(["frame", "entity"], kind="stable", ignore_index=True)
+    entities = entities[ENTITY_COLUMNS]
+
+    props = raw["properties"]
+    meta = {
+        "replay_id": replay_id,
+        "map": props.get("MapName"),
+        "team_size": props.get("TeamSize"),
+        "forfeit": bool(props.get("bForfeit", False)),
+        "team0_score": props.get("Team0Score", 0),
+        "team1_score": props.get("Team1Score", 0),
+        "n_frames": n,
+        "overtime_source": ot_source,
+    }
+    return ParsedReplay(frames=frames, entities=entities, players=players, meta=meta)
+
+
+def load_replay(path: str | Path) -> ParsedReplay:
+    """Parse a .replay file into normalized tables (see ParsedReplay)."""
+    path = Path(path)
+    raw = sa.parse_replay(path.read_bytes())
+    fd = sa.get_replay_frames_data(str(path))
+    return build_replay(path.stem, raw, fd)
