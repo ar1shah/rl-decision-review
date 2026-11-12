@@ -4,27 +4,10 @@ import math
 
 import numpy as np
 import pytest
+from conftest import EXPECTED_DEMOS, EXPECTED_GOALS
 
 from rldr.parse.frames import format_clock, player_key
 
-# Goal clocks and scorers Ari wrote down in replays/NOTES.md.
-EXPECTED_GOALS = {
-    "2C980F9741798CF5E4D1A0BFF902C275": [
-        ("3:06", "Degnis98"),
-        ("1:35", "Degnis98"),
-        ("0:54", "CohenLovesJill"),
-        ("0:38", "ari ツ"),
-        ("0:02", "CohenLovesJill"),
-    ],
-    "0AACF51B43A578E00DD400BD009DF81E": [
-        ("4:54", "NickyFuego1406"),
-        ("4:37", "iDrxp6442"),
-        ("3:43", "iDrxp6442"),
-        ("1:49", "iDrxp6442"),
-        ("1:38", "ari ツ"),
-    ],
-}
-EXPECTED_DEMOS = {"2C980F9741798CF5E4D1A0BFF902C275": 6, "0AACF51B43A578E00DD400BD009DF81E": 1}
 GOAL_REPLAY_GAP_S = 0.2
 
 

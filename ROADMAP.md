@@ -105,7 +105,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 - **Ball:** null velocity and angular velocity while sleeping (kickoff spawn, post-goal) become 0.
 - **Rotation:** quaternion `w,x,y,z` plus ZYX yaw/pitch/roll in radians. Yaw is verified (kickoff cars face the ball within 10°). Pitch/roll signs are not yet verified against RL; check them in the 1.5 renderer.
 
-### 1.3 Event extraction `[TODO]`
+### 1.3 Event extraction `[IN PROGRESS]`
 **Goal:** A table of discrete events with frame and clock time.
 - [ ] Touches (who, when, ball velocity before/after)
 - [ ] Goals (scorer, team, clock)
