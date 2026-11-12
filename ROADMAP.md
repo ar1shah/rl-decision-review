@@ -83,17 +83,27 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
   - `get_stats_events` also offers streams we may reuse or compare against later: `kickoff`, `fifty_fifty`, `whiff`, `beaten_to_ball`, `possession`, `player_possession`, `rotation_role`, `first_man_change`, `depth_role`, `shadow_defense`, `bump`, etc. Treat these as library heuristics, not ground truth.
   - No overtime replay yet, so overtime clock behavior is untested (script checks for it).
 
-### 1.2 Normalized frame table `[IN PROGRESS]`
+### 1.2 Normalized frame table `[DONE]`
 **Goal:** One clean DataFrame that everything downstream uses.
-- [ ] `src/rldr/parse/frames.py`: replay path to long-format DataFrame with columns like `frame, time, clock, is_overtime, entity (ball/player id), team, x, y, z, vx, vy, vz, rotation (quat or pitch/yaw/roll), boost (0-100), is_demolished`
-- [ ] Player metadata table: `player_id, name, team, platform`
-- [ ] Clock mapping: `clock` matches in-game clock, overtime handled
-- [ ] Handle frames during goal replays and kickoff countdowns (flag them as dead time)
-- [ ] Unit tests for boost conversion and clock mapping
+- [x] `src/rldr/parse/frames.py`: replay path to long-format DataFrame with columns like `frame, time, clock, is_overtime, entity (ball/player id), team, x, y, z, vx, vy, vz, rotation (quat or pitch/yaw/roll), boost (0-100), is_demolished`
+- [x] Player metadata table: `player_id, name, team, platform`
+- [x] Clock mapping: `clock` matches in-game clock, overtime handled
+- [x] Handle frames during goal replays and kickoff countdowns (flag them as dead time)
+- [x] Unit tests for boost conversion and clock mapping
 
 **Done when:** for a moment in NOTES.md, filtering the table by that clock time gives sensible positions.
 **Depends on:** 1.1
-**Notes:** From 1.1: build from `get_replay_frames_data` at native rate (see Decision Log). Dead time = game state `Countdown` / `PostGoalScored` via `metadata_frames` + `parse_replay()["names"]`; goal replays are absent (time gaps), not flagged frames. Boost raw 0-255. Demo victims keep a frozen position with null velocity for ~3 s. Ball velocity is null while sleeping (fill with 0).
+**Notes:** Done 2026-11-12. 53 tests pass (26 synthetic unit tests, 27 against both replays). The done-when is checked by a test plus `scripts/frames.py`: at 3:06 the ball is in Blue's net next to Degnis98, at 0:38 it's in Orange's net next to Ari, and at 3:47 Cohen is in the net under the ball.
+- **API:** `load_replay(path) -> ParsedReplay` with `.frames`, `.entities`, `.players`, `.meta`, `.at_clock("M:SS" | "+M:SS")`. `build_replay(id, raw, fd)` takes already-parsed output (tests reuse it). Load takes ~1 s. Not yet cached (1.4).
+- **`frames`** (one row per raw network frame; `frame` = the raw index every event uses): `frame, time, seconds_remaining, clock, game_state` (category), `is_live` (state `Active` only), `is_overtime`. Goal replays are absent from the data (time gaps), so they never get rows. The frames on each side of a gap are `PostGoalScored` / `Countdown`, i.e. not live.
+- **`entities`** (long format, `n_frames x (1 + n_players)` rows, sorted by frame then ball-first): `frame, entity` (`"ball"` or player key), `team` (Int8, NA for ball), `x y z vx vy vz wx wy wz qw qx qy qz yaw pitch roll boost` (0-100), `boost_active jump_active dodge_active double_jump_active powerslide_active` (nullable boolean), `sleeping, is_present, is_demolished`. Time and clock live only in `frames`; join on `frame`.
+- **Player key** = `"<Platform>:<id>"` from `remote_id` (`Steam:7656...`, `Epic:...`, `Xbox:...`, `PlayStation:<online_id>`). Don't use `PlayerStats.OnlineID` (it's `'0'` for Epic). `players` = `player_key, name, team, platform, car`.
+- **Clock:** `clock` = `SecondsRemaining` in regulation. It only changes during live play. After a goal, the kickoff restarts at the same clock, and the clock stays frozen until the kickoff touch. So one clock second can contain two stretches of play. `at_clock` numbers them in a `run` column (run 0 of a goal's clock = before the goal, run 1 = next kickoff).
+- **Overtime (UNVERIFIED, no OT replay yet):** the header has no OT key. Instead we read the replicated network attribute `TAGame.GameEvent_Soccar_TA:bOverTime` (`parse_replay()["network_frames"]["frames"][k]["updated_actors"]`, value `{"Boolean": true}`). `is_overtime` is true from the first frame it's set. If it's never set, the fallback is the first `Countdown` after the clock hits 0 with a tied score (from `goal_events`). `meta["overtime_source"]` says which was used (`flag` / `fallback` / None). OT `clock` = whole seconds since the OT kickoff went live, frozen outside live play, shown `+M:SS`. If the raw counter counts up in OT, it is used directly. Only tested on synthetic data; see 1.6.
+- **Demos:** `is_demolished` runs from the `demolish_infos` frame until respawn (the first later frame with data and `sleeping == False`). It includes `Empty` frames in that window and can span a goal reset (Ari, 2C98 2:04, 169 frames). While demolished, position, velocity, angular velocity, rotation, boost and car flags are NaN/NA. Car `rigid_body.sleeping` is true exactly during demo windows (tested).
+- **`is_present`:** False only for `Empty` car frames outside demo windows. Today those are the first 1-3 `Countdown` frames of a goal reset; later, players who left. **Use `is_present & ~is_demolished` for "this car is actually on the field."** The ball is always present.
+- **Ball:** null velocity and angular velocity while sleeping (kickoff spawn, post-goal) become 0.
+- **Rotation:** quaternion `w,x,y,z` plus ZYX yaw/pitch/roll in radians. Yaw is verified (kickoff cars face the ball within 10°). Pitch/roll signs are not yet verified against RL; check them in the 1.5 renderer.
 
 ### 1.3 Event extraction `[TODO]`
 **Goal:** A table of discrete events with frame and clock time.
@@ -106,7 +116,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 
 **Done when:** goals and kickoffs line up with NOTES.md and the final score.
 **Depends on:** 1.2
-**Notes:** From 1.1: goals, demos, and boost pad pickups are pre-extracted in `get_replay_frames_data` (`goal_events`, `demolish_infos`, `boost_pad_events` + `boost_pads`). Touches: `touch_events` has no player; `get_stats_events` stream `touch` does, but the two disagree on many frames. Decide which to trust (or derive our own) using the NOTES.md saves. `get_stats_events` also has a `kickoff` stream.
+**Notes:** From 1.1: goals, demos, and boost pad pickups are pre-extracted in `get_replay_frames_data` (`goal_events`, `demolish_infos`, `boost_pad_events` + `boost_pads`). Touches: `touch_events` has no player; `get_stats_events` stream `touch` does, but the two disagree on many frames. Decide which to trust (or derive our own) using the NOTES.md saves. `get_stats_events` also has a `kickoff` stream. From 1.2: kickoff starts are the `Countdown -> Active` transitions in `frames.game_state`; the ball is `sleeping` from then until the kickoff touch, and the clock is frozen until that touch too.
 
 ### 1.4 Parquet cache `[TODO]`
 **Goal:** Parse once, reuse fast.
@@ -132,6 +142,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 **Goal:** Make sure parsing doesn't break on edge cases.
 - [ ] Run parse on every replay in `replays/` and report failures
 - [ ] Handle overtime, forfeits, players leaving/joining, demos
+- [ ] Verify overtime on a real OT replay: `is_overtime` from the `bOverTime` flag (and that the tied-at-0:00 fallback agrees), OT `clock` vs the in-game `+M:SS`, and add its goal clocks to NOTES.md + tests (1.2 OT logic is synthetic-tested only)
 - [ ] Basic sanity checks (positions in field bounds, no NaN storms, boost 0-100)
 
 **Done when:** all replays parse and pass sanity checks.
@@ -414,3 +425,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 | 2026-11-12 | Python package named `rldr`, src layout, `uv_build` backend | Matches CLAUDE.md structure; src layout keeps tests honest about the installed package |
 | 2026-11-12 | Ruff rules E/F/W/I/UP/B, line length 100 | Catches real bugs and import order without being noisy on numeric code |
 | 2026-11-12 | Build the frame table (1.2) from `get_replay_frames_data` at native ~30 Hz, not the resampled ndarray | The ndarray defaults to 10 fps, copies the next raw frame instead of interpolating, and fills unrecorded goal-replay gaps with fake rows; frames_data keeps real timestamps and shares frame indexes with all events |
+| 2026-11-12 | Frame table = a per-frame index (`frames`) plus a long-format `entities` table keyed by `"<Platform>:<id>"`, joined on `frame` | Clock/state live in one place; entity rows stay lean; platform ids are stable where display names aren't |
+| 2026-11-12 | Demolished cars get NaN position/velocity/rotation/boost; `is_present` marks Empty frames outside demos | The recorded state is frozen at the demo spot with fake boost drain; detectors must not treat a dead or absent car as on the field |
+| 2026-11-12 | Overtime from the replicated `GameEvent_Soccar_TA:bOverTime` attribute, falling back to "first kickoff after 0:00 with a tied score" | The header has no OT key; the network attribute is the game's own flag. Unverified until we have an OT replay (1.6) |
+| 2026-11-12 | Git history rewritten once to strip a Claude co-author trailer (force-pushed `main`); `.claude/settings.json` committed to disable it | Commits are authored by Ari only (CLAUDE.md rule 8) |
