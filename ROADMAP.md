@@ -107,16 +107,31 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 
 ### 1.3 Event extraction `[IN PROGRESS]`
 **Goal:** A table of discrete events with frame and clock time.
-- [ ] Touches (who, when, ball velocity before/after)
-- [ ] Goals (scorer, team, clock)
-- [ ] Demos (attacker, victim)
-- [ ] Kickoffs (start frame of each)
-- [ ] Boost pad pickups (player, big or small, location) if the data supports it
-- [ ] Tests: goal count matches the scoreboard
+- [ ] Touches (who, when, ball velocity before/after). Evidence gathered (`scripts/touches.py`); rule waiting on Ari's sign-off
+- [x] Goals (scorer, team, clock)
+- [x] Demos (attacker, victim)
+- [x] Kickoffs (start frame of each)
+- [x] Boost pad pickups (player, big or small, location) if the data supports it
+- [x] Shots / saves / assists from the game's own stat credits (added; ground truth for touches)
+- [x] Tests: goal count matches the scoreboard
 
 **Done when:** goals and kickoffs line up with NOTES.md and the final score.
 **Depends on:** 1.2
 **Notes:** From 1.1: goals, demos, and boost pad pickups are pre-extracted in `get_replay_frames_data` (`goal_events`, `demolish_infos`, `boost_pad_events` + `boost_pads`). Touches: `touch_events` has no player; `get_stats_events` stream `touch` does, but the two disagree on many frames. Decide which to trust (or derive our own) using the NOTES.md saves. `get_stats_events` also has a `kickoff` stream. From 1.2: kickoff starts are the `Countdown -> Active` transitions in `frames.game_state`; the ball is `sleeping` from then until the kickoff touch, and the clock is frozen until that touch too.
+- **Events table (built, `src/rldr/parse/events.py`):** `build_events(parsed, fd)`; `load_replay` fills `ParsedReplay.events`. Common columns `frame, time, clock, is_overtime, run, type, player_key, team, x, y, z`, plus nullable per-type columns (see the module docstring). Same-frame order: kickoff, touch, shot, save, goal, assist, demo, boost_pickup. `frames` gained a `run` column (`clock_run`), the same numbering `at_clock` used.
+- **Goals / demos / kickoffs / pickups:** goals 5+5, which matches the scoreboard and NOTES.md. Demos 6+1 (`team` = attacker's team; victim in `other_player_key`). Kickoffs: 6 on 2C98 (goals + 1) and 5 on 0AAC: the forfeit replay ends in `Countdown` after the last goal, so that countdown is not a kickoff. `first_touch_frame` = first frame the ball wakes up. Pickups: 375 / 269 `PickedUp` events (the stats `boost_pickups` stream has fewer: 339 / 237). 10-15 per replay happen in non-live frames (`is_live` column). Big pads verified at (±3072, ±4096), (±3584, 0).
+- **Shot / save / assist** from `fd["player_stat_events"]` (the game's own credits; 12/6/1 and 9/3/1). The credit frame **trails** the touch: saves by 4-11 frames (one at 30), shots by up to 73. `replay_tick_marks` `TeamNSave` / `TeamNGoal` pair one-to-one with those events, 1.5-2.5 s earlier. NOTES.md saves all match a game save credit: 3:47 Cohen, 1:58 Degnis98, 0:22 = Ari at frame 9208 (clock 0:23; Cohen also saves at 0:21), 2:37 NickyFuego1406.
+- **Touch evidence (`uv run python scripts/touches.py`), 2C98 / 0AAC:**
+  - `touch_events` is mostly a "hitting team changed" signal. It contains 87-88% of stats touches that change the hitting team but only 18-23% of same-team touches, and it misses goal shots (the last entry before the 0:54 / 1:49 goals is 213 / 279 frames earlier). Not usable for touches.
+  - Stats stream vs physics (ball |Δv| > 300 uu/s, nearest on-field car within 250 uu, minus bounce-signature frames), same player within ±3 f: 84% / 82% of stats touches are in physics; 94% / 96% of physics touches are in stats. When they match, the physics frame equals the stats `payload.frame` 78% of the time and is otherwise mostly 1-2 frames later.
+  - Stats-only touches are mostly soft (stats ball speed change < 300; 14 / 13), then same-frame pairs (6 / 3) and attribution conflicts (7 / 2). Physics-only touches: 11 / 4, mostly the stats stream crediting the second-nearest car.
+  - Center-distance can't settle 50/50s: 29 / 185 and 18 / 106 physics touches have a second car in contact range within 30 uu of the nearest (26 / 16 of them opponents). Example: 3:47, Cohen 176 uu vs Ari 178 uu.
+  - Goals: the scoring team's last touch = scorer on 10/10 for both stats and physics.
+  - Saves/shots: the credited player is their team's last toucher before the credit on 29/30 for both. The exception is 0AAC 4:12: Ari's shot is credited after iDrxp6442 touched it in a 50/50 at Nicky's save, so the game keeps the shot with the shooter.
+- **Ball-surface exclusion (Ari):** the geometry was checked against ball extents (floor z ≈ 93, ceiling 2044, side walls 4096, back walls 5120, corner planes |x|+|y| = 8064, goal 893 x 642).
+  - Proximity only (ball within radius + 40 uu of a surface) removes 109 / 46 of 207 / 114 in-range candidates, mostly floor. **86% / 96% of those are stats-confirmed touches by the same player**, i.e. ground hits.
+  - Proximity + bounce signature (velocity into the surface reverses and Δv is within 30° of the normal) removes 22 / 8; 64% / 88% of those are still stats-confirmed, since pops and pinches look like bounces.
+  - So the surface rule should only gate physics-only additions, not filter physics as a whole.
 
 ### 1.4 Parquet cache `[TODO]`
 **Goal:** Parse once, reuse fast.
