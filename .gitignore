@@ -8,6 +8,9 @@ out/
 .env
 .env.*
 
+# Claude Code (personal settings; .claude/settings.json is shared and committed)
+.claude/settings.local.json
+
 # Python
 __pycache__/
 *.py[cod]

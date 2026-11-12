@@ -22,6 +22,8 @@ Owner: Ari (former Grand Champion in 2v2). His judgment on what counts as a mist
 4. **Validate visually.** Anything involving positions or game state should be checkable with the 2D renderer against a moment Ari remembers (see `replays/NOTES.md`).
 5. **Small, testable steps.** Write a test or a validation script for each piece before moving on.
 6. **Never commit `.replay` files or generated data** (see `.gitignore`).
+7. **Commit often.** Commit after every meaningful working step (a passing test, a working script, a docs update), and always when a ROADMAP subsection is finished. Don't wait to be asked. Keep commits small and focused, run `ruff` and `pytest` before committing, and use messages that start with the subsection ID, e.g. `1.2: add clock mapping and tests`.
+8. **No AI attribution in git.** Do NOT add `Co-Authored-By: Claude`, "Generated with Claude Code", or any other Claude/AI attribution line to commit messages or PR descriptions. Commits are authored by Ari only.
 
 ## Tech stack
 
