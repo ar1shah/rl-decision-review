@@ -71,6 +71,7 @@ uv run pytest                             # tests
 uv run ruff check .                       # lint
 uv run ruff format .                      # format (use --check to verify only)
 uv add <pkg>                              # add a runtime dep (uv add --dev <pkg> for dev-only)
+uv run python scripts/explore.py [replays/<file>.replay]  # dump raw parser output (1.1); default: all replays
 ```
 
 Not created yet (planned):
