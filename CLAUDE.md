@@ -74,7 +74,10 @@ uv run ruff check .                       # lint
 uv run ruff format .                      # format (use --check to verify only)
 uv add <pkg>                              # add a runtime dep (uv add --dev <pkg> for dev-only)
 uv run python scripts/explore.py [replays/<file>.replay]  # dump raw parser output (1.1); default: all replays
+uv run python scripts/frames.py replays/<file>.replay --clock 3:06  # ball/car state at a clock (1.2); +M:SS = OT
 ```
+
+In code: `from rldr.parse.frames import load_replay` gives `.frames`, `.entities`, `.players`, `.meta`, and `.at_clock("M:SS")`.
 
 Not created yet (planned):
 
