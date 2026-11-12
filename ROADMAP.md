@@ -83,7 +83,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
   - `get_stats_events` also offers streams we may reuse or compare against later: `kickoff`, `fifty_fifty`, `whiff`, `beaten_to_ball`, `possession`, `player_possession`, `rotation_role`, `first_man_change`, `depth_role`, `shadow_defense`, `bump`, etc. Treat these as library heuristics, not ground truth.
   - No overtime replay yet, so overtime clock behavior is untested (script checks for it).
 
-### 1.2 Normalized frame table `[TODO]`
+### 1.2 Normalized frame table `[IN PROGRESS]`
 **Goal:** One clean DataFrame that everything downstream uses.
 - [ ] `src/rldr/parse/frames.py`: replay path to long-format DataFrame with columns like `frame, time, clock, is_overtime, entity (ball/player id), team, x, y, z, vx, vy, vz, rotation (quat or pitch/yaw/roll), boost (0-100), is_demolished`
 - [ ] Player metadata table: `player_id, name, team, platform`
