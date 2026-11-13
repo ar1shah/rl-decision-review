@@ -184,14 +184,41 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 
 ### 1.5 2D top-down renderer `[IN PROGRESS]`
 **Goal:** See any moment of the game to validate the data by eye.
-- [ ] `src/rldr/viz/field.py`: draw field outline, goals, big boost pads
-- [ ] Draw ball and cars at a given clock time (team colors, name labels, boost amount, velocity arrows)
-- [ ] `scripts/render.py <replay> --clock M:SS` saves a PNG to `out/`
-- [ ] Clip mode: `--clock M:SS --seconds 5` saves a GIF/MP4 of the window with short trails
+- [x] `src/rldr/viz/field.py`: draw field outline, goals, big boost pads (all 34 pads, to scale)
+- [x] Draw ball and cars at a given clock time (team colors, name labels, boost amount, velocity arrows)
+- [x] `scripts/render.py <replay> --clock M:SS` saves a PNG to `out/`
+- [x] Clip mode: `--clock M:SS --seconds 5` saves a GIF/MP4 of the window with short trails
+- [x] Side-view inset (y vs z); pitch/roll signs from 1.2 checked (pitch flipped, see 1.2 Notes)
+- [x] Tests: field geometry, window rules, headless PNG/GIF output, 2C98 moments
+- [ ] Ari checks the renders in `out/` (3:06, 3:47, 0:38, opening kickoff)
 
 **Done when:** Ari checks 2+ moments from NOTES.md and they look right.
 **Depends on:** 1.4
-**Notes:**
+**Notes:** Built 2026-11-12; waiting on Ari's visual check. 26 new tests (`tests/test_viz_field.py`, `tests/test_viz_render.py`), 188 pass in total.
+- **Modules:** `rldr.viz.field` (constants + `draw_field` / `draw_side_field`), `rldr.viz.scene` (`ReplayView`: per-entity numpy arrays built once from `load_replay()`, `state(frame)`, touch/demo `marks`; `Renderer`; `render_snapshot`), `rldr.viz.clip` (`select_frames`, `render_clip`). CLI: `scripts/render.py` (see CLAUDE.md Commands).
+- **Field:** octagon from `SIDE_WALL_X 4096`, `BACK_WALL_Y 5120` and the corner plane |x|+|y| = 8064 (45° cuts). Goal mouth ±893, net box 880 deep (I read "goal box" as the net, since there's no painted box in the data), center circle r 1000 (cosmetic). Blue goal at the bottom. Pads come from the replay: `meta["boost_pads"]` (new, from `fd["boost_pads"]`, sorted by y, x). `STANDARD_PADS` is the fallback and matches both replays exactly.
+- **Cars:** drawn to scale from `HITBOXES[players.car]` (Octane, Dominus, Plank, Breakout, Hybrid, Merc; unknown -> Octane), with a pointed nose, a name, a boost bar + number, `z` when z > 120, and a velocity arrow = 0.5 s of travel. Labels of nearby cars stack with a leader line. Things draw in height order. The ball is translucent so cars under it stay visible (3:47).
+- **Ball:** ground shadow at true radius; ball radius × (1 + z/1000); `z` label above 250.
+- **Demos:** while `is_demolished`, a red X at the demo event's victim location (entity position is NaN then). Absent cars (`~is_present`) are left out.
+- **Header:** replay id, clock (run), score at that frame (from goal events, so the goal frame already shows the new score), game_state, frame, time.
+- **Side inset:** y horizontal, z up, same scale both ways. Each car is a dot plus a nose line from the quaternion's forward (y, z), so nose up/down reads directly. The quaternion axes check (forward vs velocity, up into the field on walls) is in 1.2 Notes. Frame 5517 (shotofsam climbing Orange's back wall, pitch +86°) is a handy visual check.
+- **Clip windows** (by `time`): `--clock M:SS --seconds N` = N s leading into the END of that clock second's live run, plus `--after S`. If the run ends in a goal, the goal frame (first `PostGoalScored`) is kept, so 3:06 ends on frame 3472 with the ball in the net and 0-1. `--frames A:B` is exact. `--kickoff N` runs from the countdown to `--seconds` after it goes live (countdown kept). Non-live frames are dropped unless `--include-dead`. A jump between kept frames is a cut: trails restart and the header shows `[cut]`. `--zoom R` = a top view box of half-width ≥ R around the ball (snapshot: at that frame; clip: fitted to the ball's path).
+- **Marks:** touches from the events table flash for 0.5 s on their frame. Plain touch = team-colored disc + name. Opponent 50/50 = black ring, "A vs B". Teammate contest = dashed magenta ring, "teammates: A + B" (same-frame rows merged). Demos = red star, "demo: attacker → victim". Trails: the last 1.5 s, fading.
+- **Output:** GIF by default at 15 fps (every 2nd raw frame). GIF stores durations in 10 ms steps, so a flat 66.7 ms became 60 ms and played 11% fast. Per-frame durations 70/60/70… now keep it real time. `--mp4` = 30 fps via ffmpeg (winget's ffmpeg 9.0.2 is on PATH; without it the CLI warns and writes a GIF). PNG 120 dpi (840×1392), clips 80 dpi.
+- **Render sizes** (2C98, this laptop, a few seconds each incl. load):
+
+  | Render | Frames | Size |
+  |---|---|---|
+  | `--clock 3:06 --seconds 6` GIF | 173 (3300-3472) | 1.15 MB |
+  | same, `--mp4` | 173 | 0.23 MB |
+  | `--clock 3:47 --seconds 3 --after 1` GIF (and `--zoom 1200`) | 115 (2212-2326) | 0.68 / 0.67 MB |
+  | `--clock 0:38 --seconds 6` GIF | 172 (8337-8508) | 1.13 MB |
+  | `--kickoff 0 --seconds 3` GIF (3.9 s countdown + 3 s) | 203 | 0.72 MB |
+  | PNG snapshots | 1 | 41-54 kB |
+
+  6 s GIFs are about 1.1 MB, well under the ~8 MB limit, so the GIF dpi stays at 80.
+- **Checked by eye (Claude):** 3:06: shotofsam demos Ari at frame 3390 (X at (-3733, -751)), then Cohen (14 boost) trails Degnis98's shot into Blue's net. 3:47 frame 2276: Ari (z 162) and Cohen (z 229) are both under the ball (z 376) on the goal line, both at 0 boost. 0:38: Ari's shot in Orange's net at 2-2. Kickoff: the four diagonal spawns, all at 33 boost.
+- Windows note: names like `ari ツ` / `Rubeen 福` need a CJK fallback font. `scene.FONTS` = DejaVu Sans plus whichever of Yu Gothic / Meiryo / MS Gothic / ... are installed.
 
 ### 1.6 Robustness pass `[TODO]`
 **Goal:** Make sure parsing doesn't break on edge cases.
@@ -212,6 +239,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 **Goal:** Shared math so detectors don't reinvent it.
 - [ ] `src/rldr/state/geometry.py`: own-goal position per team, distance helpers, "direction toward" helpers, field thirds (defensive/mid/offensive per team)
 - [ ] Constants in one place (field size, pads, speeds), verified against parsed data
+- [ ] Move the field constants and `HITBOXES` from `rldr/viz/field.py` into `state/geometry.py`. The renderer then imports them; touch contact range and challenge logic will need the hitboxes (from 1.5)
 - [ ] Unit tests
 
 **Done when:** tests pass and constants match observed data.
@@ -491,3 +519,8 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 | 2026-11-12 | Parquet cache: one file per table + `meta.json` in `data/<replay_id>/`; `load_replay` caches by default | Parsing takes 2-3 s per replay, a cached read ~30 ms. Parquet keeps pandas nullable/categorical dtypes exactly; meta.json written last marks a complete cache |
 | 2026-11-12 | Cache valid only if replay sha256, `CACHE_VERSION`, parse-code hash (all `.py` in `rldr/parse`) and subtr-actor version all match | A stale cache silently breaks detectors. The code hash catches logic changes nobody remembered to version (Ari); `CACHE_VERSION` stays for intentional schema bumps |
 | 2026-11-12 | Git history rewritten once to strip a Claude co-author trailer (force-pushed `main`); `.claude/settings.json` committed to disable it | Commits are authored by Ari only (CLAUDE.md rule 8) |
+| 2026-11-12 | `pitch` > 0 = nose up (sign flipped from standard ZYX); roll > 0 = right side down; `CACHE_VERSION` 2 | Verified on wall-driving frames; nose-up-positive is what people mean by pitch (Ari). The renderer uses the quaternion axes directly, so drawing never depended on the Euler signs |
+| 2026-11-12 | Boost pads stored in `meta["boost_pads"]` (from `fd["boost_pads"]`), with a tested standard-layout fallback | The renderer draws pads from the replay itself; no extra parquet table for 34 static rows |
+| 2026-11-12 | Clip window = N s leading into the END of the clock second (+ optional after); a goal frame is always kept | Detectors are outcome-anchored, so clips should end on the outcome (goal, save) and show the lead-up |
+| 2026-11-12 | GIF at 15 fps with real-time per-frame durations; MP4 (30 fps) only with ffmpeg | GIFs are about 1 MB for 6 s and open anywhere; GIF's 10 ms timing would otherwise play 15 fps clips 11% fast |
+| 2026-11-12 | Cars drawn at true hitbox size per `players.car` (one `HITBOXES` dict) (Ari) | Contact and spacing read correctly at a glance; the dict moves to `state/geometry.py` in 2.1 |
