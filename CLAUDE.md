@@ -77,14 +77,14 @@ uv run python scripts/explore.py [replays/<file>.replay]  # dump raw parser outp
 uv run python scripts/frames.py replays/<file>.replay --clock 3:06  # ball/car state at a clock (1.2); +M:SS = OT
 uv run python scripts/events.py replays/<file>.replay --clock 3:47  # events near a clock (1.3); --type touch, repeatable
 uv run python scripts/touches.py [replays/<file>.replay]           # touch-source evidence report (1.3)
+uv run python scripts/parse.py [replays/<file>.replay] [--force]   # build/refresh parquet cache in data/ (1.4)
 ```
 
-In code: `from rldr.parse.frames import load_replay` gives `.frames`, `.entities`, `.players`, `.meta`, `.events` (1.3 events table, incl. touches), and `.at_clock("M:SS")`.
+In code: `from rldr.parse.frames import load_replay` gives `.frames`, `.entities`, `.players`, `.meta`, `.events` (1.3 events table, incl. touches), and `.at_clock("M:SS")`. `load_replay(path)` uses the parquet cache in `data/<replay_id>/` by default (`use_cache=False` to bypass). The cache invalidates itself when the replay, any `.py` in `src/rldr/parse/`, the subtr-actor version, or `rldr.parse.cache.CACHE_VERSION` changes; still bump `CACHE_VERSION` when you change a table schema on purpose.
 
 Not created yet (planned):
 
 ```
-uv run python scripts/parse.py replays/<file>.replay                # 1.4
 uv run python scripts/render.py replays/<file>.replay --clock 2:10  # 1.5
 ```
 

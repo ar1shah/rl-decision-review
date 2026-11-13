@@ -154,14 +154,33 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
   - Rows that are both-source and not in conflict have the car within 250 uu.
 - CLI: `uv run python scripts/events.py replays/<file>.replay [--clock M:SS] [--type touch]`.
 
-### 1.4 Parquet cache `[TODO]`
+### 1.4 Parquet cache `[DONE]`
 **Goal:** Parse once, reuse fast.
-- [ ] `scripts/parse.py <replay>` writes `data/<replay_id>/frames.parquet`, `events.parquet`, `meta.json`
-- [ ] Loader that reads from cache if present, re-parses if the replay changed
+- [x] `scripts/parse.py <replay>` writes `data/<replay_id>/frames.parquet`, `entities.parquet`, `players.parquet`, `events.parquet`, `meta.json`
+- [x] Loader that reads from cache if present, re-parses if the replay changed (`load_replay(path, use_cache=True)`)
+- [x] Invalidate on replay hash, `CACHE_VERSION`, parse-code hash, or subtr-actor version change
+- [x] Round-trip test: cached tables equal fresh ones exactly, dtypes included
+- [x] Cold vs cached load times recorded below
 
 **Done when:** a second load is near-instant.
 **Depends on:** 1.2, 1.3
-**Notes:**
+**Notes:** Done 2026-11-12. 21 new tests (15 synthetic in `tests/test_cache_unit.py`, 6 on the lab replays in `tests/test_cache_replays.py`); 148 pass in total.
+- **API:** `rldr.parse.cache` (`CACHE_VERSION`, `cache_status`, `read_cache`, `write_cache`, `code_hash`). `load_replay(path, use_cache=True, cache_root=None)` reads `data/<replay_id>/` on a hit, otherwise parses and rewrites it. `use_cache=False` parses and never touches the cache. `replay_id` = file stem. `scripts/frames.py` and `scripts/events.py` now use the cache automatically. Tests still parse from raw `sa.*` (conftest), except the round-trip test, which writes to `tmp_path`.
+- **Layout:** one parquet file per table (`index=False`, default snappy) plus `meta.json` = `{"cache": {version, code_sha256, subtr_actor_version, replay_sha256, written_at}, "meta": ParsedReplay.meta}`. `meta.json` is deleted first and written last (temp file + `os.replace`), so an interrupted write reads as "no cache" and never as a half-valid cache.
+- **Invalidation** (`cache_status` reasons, checked in this order): `no cache`, `unreadable` (bad JSON; a corrupt parquet file is also a miss), `version changed`, `code changed`, `parser changed`, `hash changed`, `missing table`. A miss is never an error; it just re-parses.
+  - `code_sha256` (Ari) = sha256 over every `.py` under `src/rldr/parse/`, sorted by relative path (path + bytes, so renames count). Any edit to parsing or touch logic invalidates the cache with no version bump. CRLF is read as LF, so git autocrlf on checkout doesn't cause a spurious re-parse. Keep bumping `CACHE_VERSION` on intentional schema changes anyway (it documents them).
+  - subtr-actor version is also checked: a parser upgrade can change output with no schema change.
+- **Dtypes:** pandas 3.1.1 + pyarrow 26 round-trip every column exactly with no workarounds: categoricals (categories and order, incl. unused ones like `type`), `Int8/Int16/Int64` with NA, `boolean` with NA, `string` with NA, pandas-3 `str` (players). The test checks `dtypes.equals`, category lists, and `assert_frame_equal(check_exact=True)` per table, plus that the fresh tables actually contain all six tricky dtypes.
+- **Timings** (`uv run python scripts/parse.py`, this laptop):
+
+  | Replay | cold parse | write | cached load | cache size (replay) |
+  |---|---|---|---|---|
+  | 2C98 (10164 frames) | 2.72-2.78 s | 0.07 s | 0.015-0.05 s | 5.29 MB (1.17 MB) |
+  | 0AAC (7498 frames) | 1.86-1.91 s | 0.07-0.08 s | 0.05 s | 3.87 MB (0.85 MB) |
+
+  Cached load includes hashing the replay and the code. In a fresh process, end to end (incl. imports): 3.27 s -> 0.60 s (2C98) and 2.44 s -> 0.60 s (0AAC). Of that 0.60 s, 0.57 s is importing pandas/pyarrow/subtr_actor, so the cache read itself is ~30 ms.
+- `entities.parquet` is 96% of the cache. zstd or float32 could shrink it if storage ever matters (Phase 5); not needed now.
+- Verified: `scripts/events.py ... --clock 3:47` output is identical from cache and from a fresh parse; appending a byte to a copy of a replay gives `hash changed` and a re-parse.
 
 ### 1.5 2D top-down renderer `[TODO]`
 **Goal:** See any moment of the game to validate the data by eye.
@@ -469,4 +488,6 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 | 2026-11-12 | Ball-surface exclusion only gates physics-only touches | Applied to all physics candidates it removed 86-96% real (stats-confirmed) ground/wall hits |
 | 2026-11-12 | 50/50s get one row per player with `contest_type` (opponent / teammate); the winner is decided in 2.5 from where the ball goes | Wrong blame is worse than no blame; the touch frame alone can't say who won. Teammate contests feed the double-commit detector |
 | 2026-11-12 | Touch confidence: high = sources agree, uncontested; medium = one source or opponent 50/50 in range; low = teammate contest or source conflict | Lets detectors skip or soften blame on uncertain touches (Ari) |
+| 2026-11-12 | Parquet cache: one file per table + `meta.json` in `data/<replay_id>/`; `load_replay` caches by default | Parsing takes 2-3 s per replay, a cached read ~30 ms. Parquet keeps pandas nullable/categorical dtypes exactly; meta.json written last marks a complete cache |
+| 2026-11-12 | Cache valid only if replay sha256, `CACHE_VERSION`, parse-code hash (all `.py` in `rldr/parse`) and subtr-actor version all match | A stale cache silently breaks detectors. The code hash catches logic changes nobody remembered to version (Ari); `CACHE_VERSION` stays for intentional schema bumps |
 | 2026-11-12 | Git history rewritten once to strip a Claude co-author trailer (force-pushed `main`); `.claude/settings.json` committed to disable it | Commits are authored by Ari only (CLAUDE.md rule 8) |
