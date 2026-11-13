@@ -30,6 +30,29 @@ CUT_NOTE_SECONDS = 0.4
 DEFAULT_KICKOFF_SECONDS = 3.0
 
 
+def gif_durations(n: int, fps: float) -> list[int]:
+    """Per-frame GIF durations (ms) that average exactly 1000 / fps.
+
+    GIF stores durations in 10 ms units, so a flat 66.7 ms (15 fps) becomes 60 ms and plays
+    11% fast. Rounding the cumulative time instead gives 70, 60, 70, ... (real time).
+    """
+    edges = [round(i * 1000 / fps, -1) for i in range(n + 1)]
+    return [int(b - a) for a, b in zip(edges[:-1], edges[1:], strict=True)]
+
+
+class RealTimePillowWriter(PillowWriter):
+    """PillowWriter with per-frame durations from gif_durations."""
+
+    def finish(self) -> None:
+        self._frames[0].save(
+            self.outfile,
+            save_all=True,
+            append_images=self._frames[1:],
+            duration=gif_durations(len(self._frames), self.fps),
+            loop=0,
+        )
+
+
 def select_frames(
     view: ReplayView,
     *,
@@ -172,7 +195,7 @@ def render_clip(
 
     try:
         anim = FuncAnimation(renderer.fig, update, frames=len(shown), blit=False)
-        writer = FFMpegWriter(fps=rate) if mp4 else PillowWriter(fps=rate)
+        writer = FFMpegWriter(fps=rate) if mp4 else RealTimePillowWriter(fps=rate)
         anim.save(path, writer=writer, dpi=dpi, savefig_kwargs={"facecolor": "white"})
     finally:
         renderer.close()
