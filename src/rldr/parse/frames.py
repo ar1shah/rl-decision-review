@@ -479,13 +479,36 @@ def build_replay(replay_id: str, raw: dict[str, Any], fd: dict[str, Any]) -> Par
     return ParsedReplay(frames=frames, entities=entities, players=players, meta=meta)
 
 
-def load_replay(path: str | Path) -> ParsedReplay:
-    """Parse a .replay file into normalized tables (see ParsedReplay), including events."""
+def _parse_replay(path: Path) -> ParsedReplay:
+    """Parse a .replay file from scratch (no cache), including events."""
     from rldr.parse.events import build_events  # events builds on this module
 
-    path = Path(path)
     raw = sa.parse_replay(path.read_bytes())
     fd = sa.get_replay_frames_data(str(path))
     parsed = build_replay(path.stem, raw, fd)
     parsed.events = build_events(parsed, fd, sa.get_stats_events(str(path))["events"])
+    return parsed
+
+
+def load_replay(
+    path: str | Path, use_cache: bool = True, cache_root: str | Path | None = None
+) -> ParsedReplay:
+    """Normalized tables for a .replay file (see ParsedReplay), including events.
+
+    With `use_cache` (default), reads `data/<replay_id>/` when it is valid for this replay file
+    and this version of the parsing code, otherwise parses and (re)writes it; see
+    rldr.parse.cache. `use_cache=False` always parses and never touches the cache.
+    """
+    path = Path(path)
+    if not use_cache:
+        return _parse_replay(path)
+    from rldr.parse import cache  # cache imports this module
+
+    root = cache.DEFAULT_CACHE_ROOT if cache_root is None else Path(cache_root)
+    digest = cache.replay_hash(path)
+    cached = cache.read_cache(path.stem, digest, root)
+    if cached is not None:
+        return cached
+    parsed = _parse_replay(path)
+    cache.write_cache(parsed, digest, root)
     return parsed
