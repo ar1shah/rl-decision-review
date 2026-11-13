@@ -6,8 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import matplotlib
 import pytest
 import subtr_actor as sa
+
+matplotlib.use("Agg")  # renderer tests run headless
 
 from rldr.parse.frames import ParsedReplay, build_replay
 
