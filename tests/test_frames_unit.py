@@ -191,3 +191,20 @@ def test_quat_to_euler_pure_yaw():
     assert float(yaw) == pytest.approx(math.radians(45))
     assert float(pitch) == pytest.approx(0.0)
     assert float(roll) == pytest.approx(0.0)
+
+
+def test_quat_to_euler_pitch_positive_is_nose_up():
+    # Nose up 30 degrees = right-handed rotation of -30 about the car's left (+y) axis.
+    half = math.radians(-30) / 2
+    yaw, pitch, roll = quat_to_euler(math.cos(half), 0.0, math.sin(half), 0.0)
+    assert float(pitch) == pytest.approx(math.radians(30))
+    assert float(yaw) == pytest.approx(0.0)
+    assert float(roll) == pytest.approx(0.0)
+
+
+def test_quat_to_euler_roll_positive_is_right_side_down():
+    # +30 about the forward (+x) axis lifts the left side, i.e. the right side goes down.
+    half = math.radians(30) / 2
+    _, pitch, roll = quat_to_euler(math.cos(half), math.sin(half), 0.0, 0.0)
+    assert float(roll) == pytest.approx(math.radians(30))
+    assert float(pitch) == pytest.approx(0.0)

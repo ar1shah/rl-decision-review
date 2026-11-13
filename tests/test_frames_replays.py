@@ -187,3 +187,38 @@ def test_positions_at_degnis_goal_3_06(load_lab_replay):
     assert last.loc["ari ツ", "is_demolished"]  # Ari was demolished just before this goal
     kickoff = rows[rows["run"] == 1]
     assert kickoff["frame"].min() > before_goal["frame"].max()
+
+
+# --------------------------------------------------------------------------- rotation signs
+
+
+def _on_field_cars(p):
+    e = p.entities.merge(p.frames[["frame", "is_live"]], on="frame")
+    cars = e[(e["entity"] != "ball") & e["is_live"] & e["is_present"] & ~e["is_demolished"]]
+    return cars.dropna(subset=["qw"])
+
+
+def test_pitch_positive_when_climbing_walls(replay):
+    """Cars driving up a side wall point their nose up: pitch > 0 (ROADMAP 1.5 check)."""
+    cars = _on_field_cars(replay.parsed)
+    climbing = cars[(cars["x"].abs() > 4000) & (cars["z"] > 300) & (cars["vz"] > 500)]
+    assert len(climbing) > 30
+    assert (climbing["pitch"] > 0).mean() > 0.9
+    # forward_z from the quaternion equals sin(pitch) everywhere.
+    w, x, y, z = (cars[k].to_numpy() for k in ("qw", "qx", "qy", "qz"))
+    assert np.allclose(2 * (x * z - w * y), np.sin(cars["pitch"]), atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("wall", "facing", "roll_deg"),
+    [(-1, 1, 90), (1, 1, -90), (-1, -1, -90), (1, -1, 90)],
+)
+def test_roll_on_side_walls(replay, wall, facing, roll_deg):
+    """roll > 0 = right side down: on the -x wall facing +y the right side is toward the floor."""
+    cars = _on_field_cars(replay.parsed)
+    on_wall = cars[(cars["x"] * wall > 4000) & (cars["z"] > 300)]
+    heading = np.sin(on_wall["yaw"]) * facing  # forward_y sign, ~ +1 when facing that way
+    sel = on_wall[heading > 0.7]
+    if len(sel) < 10:
+        pytest.skip("too few wall frames with this heading")
+    assert np.degrees(sel["roll"].median()) == pytest.approx(roll_deg, abs=15)

@@ -103,7 +103,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 - **Demos:** `is_demolished` runs from the `demolish_infos` frame until respawn (the first later frame with data and `sleeping == False`). It includes `Empty` frames in that window and can span a goal reset (Ari, 2C98 2:04, 169 frames). While demolished, position, velocity, angular velocity, rotation, boost and car flags are NaN/NA. Car `rigid_body.sleeping` is true exactly during demo windows (tested).
 - **`is_present`:** False only for `Empty` car frames outside demo windows. Today those are the first 1-3 `Countdown` frames of a goal reset; later, players who left. **Use `is_present & ~is_demolished` for "this car is actually on the field."** The ball is always present.
 - **Ball:** null velocity and angular velocity while sleeping (kickoff spawn, post-goal) become 0.
-- **Rotation:** quaternion `w,x,y,z` plus ZYX yaw/pitch/roll in radians. Yaw is verified (kickoff cars face the ball within 10°). Pitch/roll signs are not yet verified against RL; check them in the 1.5 renderer.
+- **Rotation:** quaternion `w,x,y,z` plus ZYX yaw/pitch/roll in radians. Yaw is verified (kickoff cars face the ball within 10°). Signs verified in 1.5 on wall-driving frames: the quaternion's forward axis matches velocity (median cos 0.995) and its up axis points into the field on side walls. **pitch > 0 = nose up** (flipped from the standard ZYX sign in 1.5, `CACHE_VERSION` 2; forward_z = sin(pitch)). **roll > 0 = right side down** (unchanged). Tests: `test_pitch_positive_when_climbing_walls`, `test_roll_on_side_walls`.
 
 ### 1.3 Event extraction `[DONE]`
 **Goal:** A table of discrete events with frame and clock time.
@@ -182,7 +182,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 - `entities.parquet` is 96% of the cache. zstd or float32 could shrink it if storage ever matters (Phase 5); not needed now.
 - Verified: `scripts/events.py ... --clock 3:47` output is identical from cache and from a fresh parse; appending a byte to a copy of a replay gives `hash changed` and a re-parse.
 
-### 1.5 2D top-down renderer `[TODO]`
+### 1.5 2D top-down renderer `[IN PROGRESS]`
 **Goal:** See any moment of the game to validate the data by eye.
 - [ ] `src/rldr/viz/field.py`: draw field outline, goals, big boost pads
 - [ ] Draw ball and cars at a given clock time (team colors, name labels, boost amount, velocity arrows)

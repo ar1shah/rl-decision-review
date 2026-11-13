@@ -68,12 +68,15 @@ def format_clock(clock: int, is_overtime: bool = False) -> str:
 def quat_to_euler(qw: Any, qx: Any, qy: Any, qz: Any) -> tuple[Any, Any, Any]:
     """Quaternion (w, x, y, z) -> (yaw, pitch, roll) in radians, ZYX order.
 
-    Yaw is verified against kickoff spawns (cars face the ball). Pitch/roll signs are
-    standard-math conventions and not yet verified against Rocket League.
+    Physical meaning (verified on wall-driving frames, ROADMAP 1.5):
+      yaw   = heading in the x-y plane, atan2(forward_y, forward_x); kickoff cars face the ball
+      pitch > 0 = nose up (forward_z = sin(pitch)); flipped from the standard ZYX sign
+      roll  > 0 = right side down (car on the -x wall facing +y has roll ~ +90 deg)
+    The quaternion itself rotates the car's local (forward, left, up) axes into world space.
     """
     qw, qx, qy, qz = (np.asarray(q, dtype=float) for q in (qw, qx, qy, qz))
     yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy**2 + qz**2))
-    pitch = np.arcsin(np.clip(2 * (qw * qy - qz * qx), -1.0, 1.0))
+    pitch = -np.arcsin(np.clip(2 * (qw * qy - qz * qx), -1.0, 1.0))
     roll = np.arctan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx**2 + qy**2))
     return yaw, pitch, roll
 
