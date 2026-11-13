@@ -15,9 +15,15 @@ Type-specific columns are nullable and only filled for their type:
     demo          other_player_key (victim; player_key is the attacker), attacker_x/y/z
     kickoff       countdown_frame, first_touch_frame (frame = first live frame)
     boost_pickup  pad_id, pad_size ("big" / "small"), is_live
-    shot/save/assist  ball_speed (ball at the stat frame), shot_on_target (shots only)
+    shot/save/assist  ball_speed (ball at the stat frame), shot_on_target (shots only),
+                      touch_frame (shot/save: the credited player's last touch before it)
+    touch         stats_frame, touch_source ("both" / "stats" / "physics"), confidence
+                  ("high" / "medium" / "low"), contested, contest_type ("opponent" /
+                  "teammate"), alt_player_key, source_conflict, ball_speed_before,
+                  ball_speed_after, ball_dv, car_ball_dist
 
-Touches are added separately (see ROADMAP 1.3: the touch rule is decided from evidence).
+Touch rows come from `rldr.parse.touches.build_touches` (the rule agreed in ROADMAP 1.3). Their
+x, y, z is the ball one frame before the touch frame (just before contact).
 """
 
 from __future__ import annotations
@@ -29,10 +35,14 @@ import numpy as np
 import pandas as pd
 
 from rldr.parse.frames import COUNTDOWN_STATE, LIVE_STATE, ParsedReplay, player_key
+from rldr.parse.touches import build_touches
 
 # Same-frame events are ordered so that cause comes before effect.
 EVENT_TYPES = ["kickoff", "touch", "shot", "save", "goal", "assist", "demo", "boost_pickup"]
 STAT_KINDS = {"Shot": "shot", "Save": "save", "Assist": "assist"}
+# Frames before a Shot / Save credit to look for the credited player's touch. Measured lags:
+# saves 4-11 frames (one 30), shots up to 73 (ROADMAP 1.3 Notes).
+STAT_TOUCH_WINDOW = 90
 
 COMMON_COLUMNS = [
     "frame",
@@ -62,6 +72,18 @@ EXTRA_COLUMNS: dict[str, str] = {
     "is_live": "boolean",
     "ball_speed": "float64",
     "shot_on_target": "boolean",
+    "touch_frame": "Int64",
+    "stats_frame": "Int64",
+    "touch_source": "string",
+    "confidence": "string",
+    "contested": "boolean",
+    "contest_type": "string",
+    "alt_player_key": "string",
+    "source_conflict": "boolean",
+    "ball_speed_before": "float64",
+    "ball_speed_after": "float64",
+    "ball_dv": "float64",
+    "car_ball_dist": "float64",
 }
 EVENT_COLUMNS = COMMON_COLUMNS + list(EXTRA_COLUMNS)
 
@@ -276,14 +298,26 @@ def finalize_events(parsed: ParsedReplay, parts: Sequence[pd.DataFrame]) -> pd.D
     return df[EVENT_COLUMNS]
 
 
-def build_events(
-    parsed: ParsedReplay,
-    fd: dict[str, Any],
-    touches: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Events table from `parsed` (1.2 tables) and `sa.get_replay_frames_data(path)`.
+def link_stat_touches(df: pd.DataFrame, window: int = STAT_TOUCH_WINDOW) -> pd.Series:
+    """`touch_frame` for shot / save rows: the credited player's last touch at most `window`
+    frames before (or on) the stat frame. NA when there is none, and for every other type.
+    """
+    out = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    touches = df[df["type"] == "touch"]
+    by_player = {k: g["frame"].to_numpy() for k, g in touches.groupby("player_key")}
+    for i, r in df[df["type"].isin(["shot", "save"])].iterrows():
+        frames = by_player.get(r["player_key"], np.array([], dtype=np.int64))
+        prior = frames[(frames <= r["frame"]) & (frames >= r["frame"] - window)]
+        if len(prior):
+            out.at[i] = int(prior.max())
+    return out
 
-    `touches` (optional, same column layout) is merged in once the touch rule exists.
+
+def build_events(
+    parsed: ParsedReplay, fd: dict[str, Any], stats_events: Sequence[dict[str, Any]]
+) -> pd.DataFrame:
+    """Events table from `parsed` (1.2 tables), `sa.get_replay_frames_data(path)` and
+    `sa.get_stats_events(path)["events"]` (the touch stream for the touch rule).
     """
     parts = [
         kickoff_events(parsed),
@@ -291,7 +325,8 @@ def build_events(
         demo_events(fd["demolish_infos"]),
         pickup_events(fd["boost_pad_events"], fd["boost_pads"]),
         stat_events(fd.get("player_stat_events", [])),
+        build_touches(parsed, stats_events),
     ]
-    if touches is not None:
-        parts.append(touches)
-    return finalize_events(parsed, parts)
+    df = finalize_events(parsed, parts)
+    df["touch_frame"] = link_stat_touches(df)
+    return df

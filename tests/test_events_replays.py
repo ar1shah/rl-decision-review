@@ -20,7 +20,7 @@ _EVENTS: dict[str, pd.DataFrame] = {}
 def events(replay) -> pd.DataFrame:
     rid = replay.parsed.meta["replay_id"]
     if rid not in _EVENTS:
-        _EVENTS[rid] = build_events(replay.parsed, replay.fd)
+        _EVENTS[rid] = build_events(replay.parsed, replay.fd, replay.stats)
     return _EVENTS[rid]
 
 
@@ -181,3 +181,111 @@ def test_notes_saves_are_stat_saves(events, replay):
         assert who in {names[k] for k in near(clock)["player_key"]}, clock
     for clock in orange[rid]:
         assert (near(clock)["team"] == 1).any(), clock
+
+
+# --------------------------------------------------------------------------- touches
+
+
+def _touches(events):
+    return events[events["type"] == "touch"]
+
+
+def test_touch_rows_are_complete(events):
+    t = _touches(events)
+    assert len(t) > 50
+    assert t["player_key"].notna().all() and t["team"].notna().all()
+    assert set(t["touch_source"]) <= {"both", "stats", "physics"}
+    assert set(t["confidence"]) <= {"high", "medium", "low"}
+    assert (t["stats_frame"].isna() == (t["touch_source"] == "physics")).all()
+    contested = t["contested"].astype(bool)
+    assert t.loc[contested, "contest_type"].isin(["opponent", "teammate"]).all()
+    assert t.loc[~contested, "contest_type"].isna().all()
+    flagged = contested | t["source_conflict"].astype(bool)
+    assert t.loc[flagged, "alt_player_key"].notna().all()
+    assert (t.loc[flagged, "alt_player_key"] != t.loc[flagged, "player_key"]).all()
+    assert not t.duplicated(["frame", "player_key"]).any()
+    assert (
+        t[["ball_speed_before", "ball_speed_after", "ball_dv", "car_ball_dist"]].notna().all().all()
+    )
+
+
+def test_no_touches_in_non_live_frames(events, replay):
+    live = replay.parsed.frames.set_index("frame")["is_live"]
+    assert live.loc[_touches(events)["frame"]].all()
+
+
+def test_both_source_touches_are_in_contact_range(events):
+    t = _touches(events)
+    both = t[(t["touch_source"] == "both") & ~t["source_conflict"].astype(bool)]
+    assert (both["car_ball_dist"] <= 250).all()
+
+
+def test_scoring_team_last_touch_is_the_scorer(events):
+    t = _touches(events)
+    for _, g in events[events["type"] == "goal"].iterrows():
+        prior = t[(t["team"] == g["team"]) & (t["frame"] <= g["frame"])]
+        last = prior[prior["frame"] == prior["frame"].max()]
+        assert g["player_key"] in set(last["player_key"]), g["clock"]
+
+
+def test_saver_is_their_team_last_toucher(events):
+    t = _touches(events)
+    for _, s in events[events["type"] == "save"].iterrows():
+        prior = t[(t["team"] == s["team"]) & (t["frame"] <= s["frame"])]
+        last = prior[prior["frame"] == prior["frame"].max()]
+        assert s["player_key"] in set(last["player_key"]), s["clock"]
+        assert s["touch_frame"] == last["frame"].iloc[0]
+
+
+def test_every_shot_and_save_has_the_credited_players_touch(events):
+    stat = events[events["type"].isin(["shot", "save"])]
+    assert stat["touch_frame"].notna().all()
+    assert (stat["frame"] - stat["touch_frame"]).between(0, 90).all()
+    assert events.loc[~events["type"].isin(["shot", "save"]), "touch_frame"].isna().all()
+
+
+def test_kickoff_first_touch_has_a_touch_row(events):
+    t = _touches(events)
+    for _, k in events[events["type"] == "kickoff"].iterrows():
+        assert (t["frame"] == k["first_touch_frame"]).any(), k["clock"]
+
+
+def test_notes_saves_have_the_savers_touch(events, replay):
+    """NOTES.md saves: the touch behind each save credit is by the right player / team."""
+    rid = replay.parsed.meta["replay_id"]
+    names = _names(replay)
+    expected = {  # clock -> player name (or "Orange")
+        "2C980F9741798CF5E4D1A0BFF902C275": {
+            "3:47": "CohenLovesJill",
+            "1:58": "Orange",
+            "0:22": "ari ツ",
+        },
+        "0AACF51B43A578E00DD400BD009DF81E": {"2:37": "Orange"},
+    }[rid]
+    t = _touches(events).set_index(["frame", "player_key"])
+    saves = events[events["type"] == "save"]
+    for clock, who in expected.items():
+        secs = int(clock.split(":")[0]) * 60 + int(clock.split(":")[1])
+        near = saves[(saves["clock"] - secs).abs() <= 1]
+        if who == "Orange":
+            near = near[near["team"] == 1]
+        else:
+            near = near[near["player_key"].map(names) == who]
+        assert len(near), clock
+        s = near.iloc[0]
+        touch = t.loc[(s["touch_frame"], s["player_key"])]
+        assert touch["team"] == s["team"], clock
+
+
+def test_notes_347_is_a_teammate_50_50_and_022_is_ari(events, replay):
+    if replay.parsed.meta["replay_id"] != "2C980F9741798CF5E4D1A0BFF902C275":
+        pytest.skip("2C98 only")
+    names = _names(replay)
+    t = _touches(events)
+    t = t.assign(name=t["player_key"].map(names))
+    at_347 = t[(t["clock"] == 227) & (t["name"].isin(["CohenLovesJill", "ari ツ"]))]
+    pair = at_347[at_347["frame"] == 2276]
+    assert set(pair["name"]) == {"CohenLovesJill", "ari ツ"}
+    assert (pair["contest_type"] == "teammate").all() and (pair["confidence"] == "low").all()
+    ari_022 = t[(t["name"] == "ari ツ") & t["frame"].between(9200, 9204)]
+    assert len(ari_022) == 1 and ari_022.iloc[0]["ball_dv"] > 2000

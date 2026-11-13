@@ -487,5 +487,5 @@ def load_replay(path: str | Path) -> ParsedReplay:
     raw = sa.parse_replay(path.read_bytes())
     fd = sa.get_replay_frames_data(str(path))
     parsed = build_replay(path.stem, raw, fd)
-    parsed.events = build_events(parsed, fd)
+    parsed.events = build_events(parsed, fd, sa.get_stats_events(str(path))["events"])
     return parsed
