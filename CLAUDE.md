@@ -75,9 +75,11 @@ uv run ruff format .                      # format (use --check to verify only)
 uv add <pkg>                              # add a runtime dep (uv add --dev <pkg> for dev-only)
 uv run python scripts/explore.py [replays/<file>.replay]  # dump raw parser output (1.1); default: all replays
 uv run python scripts/frames.py replays/<file>.replay --clock 3:06  # ball/car state at a clock (1.2); +M:SS = OT
+uv run python scripts/events.py replays/<file>.replay --clock 3:47  # events near a clock (1.3); --type touch, repeatable
+uv run python scripts/touches.py [replays/<file>.replay]           # touch-source evidence report (1.3)
 ```
 
-In code: `from rldr.parse.frames import load_replay` gives `.frames`, `.entities`, `.players`, `.meta`, and `.at_clock("M:SS")`.
+In code: `from rldr.parse.frames import load_replay` gives `.frames`, `.entities`, `.players`, `.meta`, `.events` (1.3 events table, incl. touches), and `.at_clock("M:SS")`.
 
 Not created yet (planned):
 

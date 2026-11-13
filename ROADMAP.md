@@ -105,15 +105,15 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 - **Ball:** null velocity and angular velocity while sleeping (kickoff spawn, post-goal) become 0.
 - **Rotation:** quaternion `w,x,y,z` plus ZYX yaw/pitch/roll in radians. Yaw is verified (kickoff cars face the ball within 10°). Pitch/roll signs are not yet verified against RL; check them in the 1.5 renderer.
 
-### 1.3 Event extraction `[IN PROGRESS]`
+### 1.3 Event extraction `[DONE]`
 **Goal:** A table of discrete events with frame and clock time.
-- [ ] Touches (who, when, ball velocity before/after). Evidence gathered (`scripts/touches.py`); rule waiting on Ari's sign-off
+- [x] Touches (who, when, ball velocity before/after): stats stream + physics, with contested / confidence (rule below)
 - [x] Goals (scorer, team, clock)
 - [x] Demos (attacker, victim)
 - [x] Kickoffs (start frame of each)
 - [x] Boost pad pickups (player, big or small, location) if the data supports it
 - [x] Shots / saves / assists from the game's own stat credits (added; ground truth for touches)
-- [x] Tests: goal count matches the scoreboard
+- [x] Tests: goal count matches the scoreboard; demos, kickoffs, saves, scorers, touches (see `tests/test_events_replays.py`, `tests/test_touches_unit.py`)
 
 **Done when:** goals and kickoffs line up with NOTES.md and the final score.
 **Depends on:** 1.2
@@ -132,6 +132,27 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
   - Proximity only (ball within radius + 40 uu of a surface) removes 109 / 46 of 207 / 114 in-range candidates, mostly floor. **86% / 96% of those are stats-confirmed touches by the same player**, i.e. ground hits.
   - Proximity + bounce signature (velocity into the surface reverses and Δv is within 30° of the normal) removes 22 / 8; 64% / 88% of those are still stats-confirmed, since pops and pinches look like bounces.
   - So the surface rule should only gate physics-only additions, not filter physics as a whole.
+- **Touch rule (built, `rldr.parse.touches.build_touches`, agreed with Ari):**
+  - Stats `touch` stream is the base list. Same-player repeats within 2 frames are one touch, except a touch that is half of a same-frame pair (0AAC 4:37: iDrxp at 1112, then iDrxp + Ari together at 1113; deduping that pair broke the scorer check).
+  - Each stats touch is matched to an in-range physics touch within ±3 frames. Candidates are frames where the player is the nearest car, or second and within 30 uu of it, closest in time first. A frame where the player is in range but more than 30 uu behind the nearest car is used only as a fallback. Picking "nearest car" frames first was wrong at the 2C98 0:02 kickoff: shotofsam's 50/50 at 10070 got moved to 10073. On a match the touch moves to the physics frame (`touch_source=both`, `stats_frame` keeps the original).
+  - `contested` + `alt_player_key` + `contest_type` (`opponent` / `teammate`): stats credits 2+ players on one frame (one row each), or physics has another car in contact range within 30 uu. The teammate case is a double-commit signal for 3.3. Who won a 50/50 is not decided here (2.5).
+  - `source_conflict`: physics puts a different car on the ball. `alt_player_key` = physics' car.
+  - Physics-only additions need all of: |Δv| >= 500, exactly one car in range, no surface contact, no bounce, and no stats touch within ±10 frames. Only 1 in each replay set (2C98 4:19 Degnis98).
+  - Confidence: high = both sources agree, not contested. medium = one source, or an opponent 50/50 with the credited car in range. low = teammate-contested, a source conflict, or an opponent 50/50 with the car out of range.
+  - `x, y, z` for touches is the ball at frame-1 (just before contact). `ball_speed_before/after` are frame-1 / frame. `car_ball_dist` is the credited car (min of f-1, f).
+  - Shot / save rows get `touch_frame` = the credited player's last touch within 90 frames before the credit.
+- **Touch counts (2C98 / 0AAC):** 180 / 106 touches. Source: both 170 / 99, stats only 9 / 7, physics only 1 / 0.
+  - Confidence: **high 139 / 76, medium 30 / 24, low 11 / 6.**
+  - Contested: opponent 21 / 18, teammate 7 / 3. Source conflicts: 5 / 3.
+  - 3:47 (2C98) comes out as a teammate 50/50 (Ari + Cohen on frame 2276, both low) followed by Cohen's save credit. 0:22 is Ari at 9203 (Δv 2724). 2:37 (0AAC) is Nicky at 5288.
+- **Checks that pass on both replays:**
+  - Every goal's scorer is among their team's last touchers.
+  - Every save credit's player is among their team's last touchers, and `touch_frame` is that touch.
+  - Every shot and save has the credited player's touch within 90 frames.
+  - Every kickoff's `first_touch_frame` has a touch row.
+  - No touch rows in non-live frames.
+  - Rows that are both-source and not in conflict have the car within 250 uu.
+- CLI: `uv run python scripts/events.py replays/<file>.replay [--clock M:SS] [--type touch]`.
 
 ### 1.4 Parquet cache `[TODO]`
 **Goal:** Parse once, reuse fast.
@@ -217,7 +238,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 
 **Done when:** possession changes line up with touches and feel right on the overlay.
 **Depends on:** 1.3, 2.1
-**Notes:**
+**Notes:** From 1.3: touches carry `contested` / `contest_type` / `alt_player_key`. Same-frame pairs are one row per player, and who won a 50/50 is decided here, from where the ball goes next (Ari). Use `confidence` to avoid assigning possession on `low` touches alone.
 
 ---
 
@@ -263,7 +284,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 
 **Done when:** catches all staged double commits, no clean-play flags, correct blame.
 **Depends on:** 3.2
-**Notes:**
+**Notes:** From 1.3: touches with `contest_type == "teammate"` (two teammates on the ball within a frame or 30 uu of each other) are a direct double-commit signal: 7 on 2C98, 3 on 0AAC, including 3:47 (Ari + Cohen).
 
 ### 3.4 Last-man challenge detector `[TODO]`
 **Goal:** Catch the last man leaving net and losing the challenge.
@@ -443,4 +464,9 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 | 2026-11-12 | Frame table = a per-frame index (`frames`) plus a long-format `entities` table keyed by `"<Platform>:<id>"`, joined on `frame` | Clock/state live in one place; entity rows stay lean; platform ids are stable where display names aren't |
 | 2026-11-12 | Demolished cars get NaN position/velocity/rotation/boost; `is_present` marks Empty frames outside demos | The recorded state is frozen at the demo spot with fake boost drain; detectors must not treat a dead or absent car as on the field |
 | 2026-11-12 | Overtime from the replicated `GameEvent_Soccar_TA:bOverTime` attribute, falling back to "first kickoff after 0:00 with a tied score" | The header has no OT key; the network attribute is the game's own flag. Unverified until we have an OT replay (1.6) |
+| 2026-11-12 | Events table is one wide frame-sorted table, nullable per-type columns, same `frame` index as `frames` | One place for detectors to look; parquet-friendly for 1.4; joins to the frame table without remapping |
+| 2026-11-12 | Touch rule: stats `touch` stream as the base, physics (ball Δv + nearest car) for timing, contest and confidence; `touch_events` not used | `touch_events` is a team-change signal that misses goal shots. Stats and physics agree on 82-96% (same player, ±3 f), and both get 10/10 scorers and 29/30 saves/shots. Physics alone can't settle 50/50s by distance, so contests are flagged instead of guessed |
+| 2026-11-12 | Ball-surface exclusion only gates physics-only touches | Applied to all physics candidates it removed 86-96% real (stats-confirmed) ground/wall hits |
+| 2026-11-12 | 50/50s get one row per player with `contest_type` (opponent / teammate); the winner is decided in 2.5 from where the ball goes | Wrong blame is worse than no blame; the touch frame alone can't say who won. Teammate contests feed the double-commit detector |
+| 2026-11-12 | Touch confidence: high = sources agree, uncontested; medium = one source or opponent 50/50 in range; low = teammate contest or source conflict | Lets detectors skip or soften blame on uncertain touches (Ari) |
 | 2026-11-12 | Git history rewritten once to strip a Claude co-author trailer (force-pushed `main`); `.claude/settings.json` committed to disable it | Commits are authored by Ari only (CLAUDE.md rule 8) |
