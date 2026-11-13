@@ -11,8 +11,8 @@ Three independent views of "who touched the ball when":
                       (floor, walls, ceiling, corners, goal frame) labelled so bounces next to a
                       car can be told apart from hits.
 
-The final touch rule is chosen from the evidence in `scripts/touches.py` and confirmed with
-Ari before it is built (see ROADMAP 1.3).
+`build_touches` combines them with the touch rule agreed with Ari from the evidence in
+`scripts/touches.py` (see `resolve_touches`, ROADMAP 1.3 and the Decision Log).
 """
 
 from __future__ import annotations
