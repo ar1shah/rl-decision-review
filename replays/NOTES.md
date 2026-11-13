@@ -49,8 +49,8 @@ Do these on purpose and write down the clock time for each:
 
 | Clock | What happened | Source | Whose fault (if a mistake) |
 |---|---|---|---|
-| 3:47 | CohenLovesJill save | Ari | n/a |
-| 3:06 | Degnis98 scores (0-1) | Ari + parser | unknown |
+| 3:47 | CohenLovesJill save. Ari and Cohen both went for the save on the goal line (same-frame touch in data). Ari: "technically a double commit" | Ari + parser | double commit, both (on the goal line, ball going in) |
+| 3:06 | Degnis98 scores (0-1). shotofsam demoed rawun first; then Cohen got a bad touch and had no boost (9 at the goal) to recover and save | Ari + parser | Cohen (bad touch + no boost). NOT rawun: he was demoed |
 | 1:58 | Orange save | Ari | n/a |
 | 1:35 | Degnis98 scores (0-2) | parser only | unknown |
 | 0:54 | CohenLovesJill scores (1-2) | Ari + parser | n/a |
