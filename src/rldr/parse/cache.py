@@ -63,13 +63,14 @@ def code_hash(src_dir: str | Path = PARSE_DIR) -> str:
     """sha256 over every .py file under `src_dir`, sorted by relative path.
 
     Each file contributes its relative path and its bytes, so edits, additions, deletions and
-    renames all change the hash.
+    renames all change the hash. CRLF is read as LF: git's autocrlf rewrites line endings on
+    checkout, which shouldn't count as a code change.
     """
     src_dir = Path(src_dir)
     h = hashlib.sha256()
     for rel in sorted(p.relative_to(src_dir).as_posix() for p in src_dir.rglob("*.py")):
         h.update(rel.encode() + b"\0")
-        h.update((src_dir / rel).read_bytes() + b"\0")
+        h.update((src_dir / rel).read_bytes().replace(b"\r\n", b"\n") + b"\0")
     return h.hexdigest()
 
 

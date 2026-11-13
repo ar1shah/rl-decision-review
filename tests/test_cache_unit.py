@@ -153,6 +153,9 @@ def test_code_hash_tracks_py_files(tmp_path):
     (src / "__pycache__" / "a.cpython-312.pyc").write_bytes(b"\x00bytecode")
     assert cache.code_hash(src) == base  # only .py files count
 
+    (src / "a.py").write_bytes(b"A = 1\r\n")
+    assert cache.code_hash(src) == base  # line endings (git autocrlf) don't count
+
     (src / "a.py").write_text("A = 2\n")
     assert cache.code_hash(src) != base  # edit
     (src / "a.py").write_text("A = 1\n")
