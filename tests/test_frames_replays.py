@@ -222,3 +222,14 @@ def test_roll_on_side_walls(replay, wall, facing, roll_deg):
     if len(sel) < 10:
         pytest.skip("too few wall frames with this heading")
     assert np.degrees(sel["roll"].median()) == pytest.approx(roll_deg, abs=15)
+
+
+def test_boost_pads_in_meta(replay):
+    pads = replay.parsed.meta["boost_pads"]
+    assert len(pads) == len(replay.fd["boost_pads"]) == 34
+    big = {(p["x"], p["y"]) for p in pads if p["size"] == "big"}
+    assert big == {(sx * 3072.0, sy * 4096.0) for sx in (-1, 1) for sy in (-1, 1)} | {
+        (-3584.0, 0.0),
+        (3584.0, 0.0),
+    }
+    assert sum(p["size"] == "small" for p in pads) == 28

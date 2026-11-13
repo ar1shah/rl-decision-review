@@ -407,6 +407,24 @@ def _players_table(meta: dict[str, Any]) -> pd.DataFrame:
     return players.astype({"team": "int8"})
 
 
+def boost_pads(pads: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`fd["boost_pads"]` as plain JSON rows {pad_id, x, y, z, size ("big" / "small")}.
+
+    Sorted by (y, x) so the order doesn't depend on the replay's actor ids.
+    """
+    rows = [
+        {
+            "pad_id": p["pad_id"],
+            "x": float(p["position"]["x"]),
+            "y": float(p["position"]["y"]),
+            "z": float(p["position"]["z"]),
+            "size": str(p["size"]).lower(),
+        }
+        for p in pads
+    ]
+    return sorted(rows, key=lambda r: (r["y"], r["x"]))
+
+
 def build_replay(replay_id: str, raw: dict[str, Any], fd: dict[str, Any]) -> ParsedReplay:
     """Build the tables from `sa.parse_replay(bytes)` and `sa.get_replay_frames_data(path)`."""
     names = raw["names"]
@@ -478,6 +496,7 @@ def build_replay(replay_id: str, raw: dict[str, Any], fd: dict[str, Any]) -> Par
         "team1_score": props.get("Team1Score", 0),
         "n_frames": n,
         "overtime_source": ot_source,
+        "boost_pads": boost_pads(fd.get("boost_pads", [])),
     }
     return ParsedReplay(frames=frames, entities=entities, players=players, meta=meta)
 

@@ -36,7 +36,7 @@ from rldr.parse.frames import ParsedReplay
 
 # Bump whenever a table's columns, dtypes or meaning change on purpose. Code changes in
 # rldr/parse invalidate the cache on their own (code hash); this is for explicit schema bumps.
-CACHE_VERSION = 2  # 2: pitch sign flipped (pitch > 0 = nose up)
+CACHE_VERSION = 2  # 2: pitch sign flipped (pitch > 0 = nose up); meta gains boost_pads
 
 TABLES = ("frames", "entities", "players", "events")
 META_FILE = "meta.json"
