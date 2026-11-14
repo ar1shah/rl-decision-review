@@ -211,10 +211,11 @@ def test_pitch_positive_when_climbing_walls(replay):
 
 @pytest.mark.parametrize(
     ("wall", "facing", "roll_deg"),
-    [(-1, 1, 90), (1, 1, -90), (-1, -1, -90), (1, -1, 90)],
+    [(1, 1, 90), (-1, 1, -90), (1, -1, -90), (-1, -1, 90)],
 )
 def test_roll_on_side_walls(replay, wall, facing, roll_deg):
-    """roll > 0 = right side down: on the -x wall facing +y the right side is toward the floor."""
+    """roll > 0 = right side down. Facing +y, +x is on the car's left (left-handed coords), so
+    on the +x wall the wheels face left and the right side is toward the floor."""
     cars = _on_field_cars(replay.parsed)
     on_wall = cars[(cars["x"] * wall > 4000) & (cars["z"] > 300)]
     heading = np.sin(on_wall["yaw"]) * facing  # forward_y sign, ~ +1 when facing that way
