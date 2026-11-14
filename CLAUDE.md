@@ -94,7 +94,7 @@ Windows note: uv was installed with winget. If `uv` isn't found in an already-op
 ## Rocket League domain reference
 
 ### Field coordinates (Unreal units, "uu")
-- **x**: side to side, about -4096 to +4096
+- **x**: side to side, about -4096 to +4096. **Left-handed axes (Unreal): facing Orange's goal from Blue's, +x is on the LEFT.** A car's local axes are (forward, right, up).
 - **y**: goal to goal, about -5120 to +5120. **Blue defends the -y goal, Orange defends the +y goal.**
 - **z**: up, 0 (floor) to about 2044 (ceiling)
 - Goal mouth: about 1786 wide (x from -893 to +893), 642 tall
