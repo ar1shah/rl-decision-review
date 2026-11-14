@@ -141,10 +141,9 @@ def test_marks_merge_same_frame_touches(synthetic):
 
 
 def test_quat_axes_identity_and_yaw():
-    fwd, left, up = quat_axes(1.0, 0.0, 0.0, 0.0)
-    assert (
-        np.allclose(fwd, [1, 0, 0]) and np.allclose(left, [0, 1, 0]) and np.allclose(up, [0, 0, 1])
-    )
+    fwd, right, up = quat_axes(1.0, 0.0, 0.0, 0.0)  # local +y is the car's right (left-handed)
+    assert np.allclose(fwd, [1, 0, 0]) and np.allclose(right, [0, 1, 0])
+    assert np.allclose(up, [0, 0, 1])
     half = np.radians(90) / 2
     fwd, _, _ = quat_axes(np.cos(half), 0.0, 0.0, np.sin(half))
     assert np.allclose(fwd, [0, 1, 0])
@@ -263,3 +262,13 @@ def test_lab_3_47_teammate_double_touch(lab_view):
     mark = next(m for m in lab_view.marks if m.frame == 2276)
     assert mark.kind == "teammate"
     assert sorted(mark.names) == ["CohenLovesJill", "ari ツ"]
+
+
+def test_zoom_keeps_mirrored_x(synthetic):
+    from rldr.viz.scene import Renderer
+
+    r = Renderer(synthetic, dpi=40)
+    r.zoom((1000.0, 0.0), 500.0)
+    lo, hi = r.ax_top.get_xlim()
+    assert (lo, hi) == (1500.0, 500.0)
+    r.close()

@@ -77,3 +77,14 @@ def test_draw_field_headless(tmp_path):
     fig.savefig(out)
     plt.close(fig)
     assert out.stat().st_size > 1000
+
+
+def test_top_view_draws_plus_x_on_the_left():
+    """RL coords are left-handed: from Blue's end, +x is on the left (Ari, 2C98 0:38)."""
+    fig, ax = plt.subplots()
+    field.draw_field(ax)
+    lo, hi = ax.get_xlim()
+    assert lo > hi  # screen-left limit is the larger x
+    field.set_top_xlim(ax, -100.0, 100.0)
+    assert ax.get_xlim() == (100.0, -100.0)
+    plt.close(fig)

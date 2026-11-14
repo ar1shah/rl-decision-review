@@ -1,7 +1,10 @@
 """Field geometry (uu) and drawing for the 2D renderer (ROADMAP 1.5).
 
 Coordinates are Unreal units: x side to side, y goal to goal, z up. Blue defends -y (drawn at
-the bottom), Orange defends +y (top).
+the bottom), Orange defends +y (top). Rocket League's coordinates are left-handed (Unreal): facing
+Orange's goal from Blue's, **+x is on the left**. So the top view draws +x to the LEFT of the
+screen (`SCREEN_RIGHT_X = -1`), which makes it look like the field from Blue's end (checked by
+Ari on 2C98 0:38: the play at x ~ -2300 was on the right side).
 
 The constants here (field, goals, ball, car hitboxes) move to `rldr.state.geometry` in 2.1, so
 the detectors share one copy (touch contact range and challenge logic need the hitboxes).
@@ -120,6 +123,8 @@ def goal_box(team: int) -> tuple[float, float, float, float]:
 # --------------------------------------------------------------------------- drawing
 
 TOP_XLIM = (-SIDE_WALL_X - 250, SIDE_WALL_X + 250)
+# Direction of "screen right" in world x for the top view. -1: +x is drawn on the left.
+SCREEN_RIGHT_X = -1.0
 TOP_YLIM = (-BACK_WALL_Y - GOAL_DEPTH - 150, BACK_WALL_Y + GOAL_DEPTH + 150)
 SIDE_XLIM = TOP_YLIM
 SIDE_YLIM = (-120, CEILING_Z + 120)
@@ -150,13 +155,18 @@ def draw_field(ax: Axes, pads: pd.DataFrame | Sequence[Mapping[str, Any]] | None
                 edgecolor="none",
             )
         )
-    ax.set_xlim(*TOP_XLIM)
+    set_top_xlim(ax, *TOP_XLIM)
     ax.set_ylim(*TOP_YLIM)
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
+
+
+def set_top_xlim(ax: Axes, lo: float, hi: float) -> None:
+    """Top-view x limits with world x running in the SCREEN_RIGHT_X direction."""
+    ax.set_xlim((lo, hi) if SCREEN_RIGHT_X > 0 else (hi, lo))
 
 
 def draw_side_field(ax: Axes) -> None:

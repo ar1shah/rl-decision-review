@@ -23,6 +23,7 @@ from matplotlib.patches import Circle, FancyArrowPatch, Polygon, Rectangle
 from rldr.parse.frames import ParsedReplay, format_clock, parse_clock
 from rldr.viz.field import (
     BALL_RADIUS,
+    SCREEN_RIGHT_X,
     TEAM_COLORS,
     TOP_XLIM,
     TOP_YLIM,
@@ -30,6 +31,7 @@ from rldr.viz.field import (
     draw_side_field,
     hitbox_for,
     pads_from_meta,
+    set_top_xlim,
 )
 
 TRAIL_SECONDS = 1.5  # trail length in clips
@@ -68,16 +70,18 @@ FONTS = _font_family()
 
 
 def quat_axes(qw: Any, qx: Any, qy: Any, qz: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """World-space (forward, left, up) unit vectors of a car from its quaternion (w, x, y, z).
+    """World-space (forward, right, up) unit vectors of a car from its quaternion (w, x, y, z).
 
     Verified on the lab replays: forward matches velocity while driving, and up points into the
-    field on side walls (ROADMAP 1.5 Notes). Works on scalars or arrays; returns shape (..., 3).
+    field on side walls (ROADMAP 1.5 Notes). The rotated local +y axis is the car's RIGHT side,
+    because Rocket League's coordinates are left-handed (Unreal: x forward, y right, z up).
+    Works on scalars or arrays; returns shape (..., 3).
     """
     w, x, y, z = (np.asarray(q, dtype=float) for q in (qw, qx, qy, qz))
     forward = np.stack([1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)], -1)
-    left = np.stack([2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)], -1)
+    right = np.stack([2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)], -1)
     up = np.stack([2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)], -1)
-    return forward, left, up
+    return forward, right, up
 
 
 @dataclass
@@ -312,7 +316,7 @@ def car_polygon(pos: np.ndarray, forward: np.ndarray, hitbox: Sequence[float]) -
     length, width = hitbox[0], hitbox[1]
     yaw = np.arctan2(forward[1], forward[0])
     f = np.array([np.cos(yaw), np.sin(yaw)])
-    left = np.array([-f[1], f[0]])
+    side = np.array([-f[1], f[0]])  # perpendicular; the outline is symmetric
     local = [
         (-length / 2, -width / 2),
         (length * 0.3, -width / 2),
@@ -320,7 +324,7 @@ def car_polygon(pos: np.ndarray, forward: np.ndarray, hitbox: Sequence[float]) -
         (length * 0.3, width / 2),
         (-length / 2, width / 2),
     ]
-    return np.array([pos[:2] + a * f + b * left for a, b in local])
+    return np.array([pos[:2] + a * f + b * side for a, b in local])
 
 
 LABEL_STEP = 260.0  # vertical spacing between stacked car labels (uu)
@@ -370,7 +374,7 @@ class Renderer:
         x0, x1 = TOP_XLIM
         y0, y1 = TOP_YLIM
         half_height = half_width * (y1 - y0) / (x1 - x0)
-        self.ax_top.set_xlim(center[0] - half_width, center[0] + half_width)
+        set_top_xlim(self.ax_top, center[0] - half_width, center[0] + half_width)
         self.ax_top.set_ylim(center[1] - half_height, center[1] + half_height)
 
     # ------------------------------------------------------------------ helpers
@@ -457,22 +461,20 @@ class Renderer:
             )
         # Name, then a boost bar with the number.
         self._text(top, x, y + 300 + label_dy, car.name, ha="center", va="bottom", color="k")
-        bx, by = x - BOOST_BAR_LEN / 2, y + 200 + label_dy
+        right = SCREEN_RIGHT_X * BOOST_BAR_LEN  # bar runs left to right on screen
+        bx, by = x - right / 2, y + 200 + label_dy
         frac = 0.0 if np.isnan(car.boost) else car.boost / 100
         self._add(
-            top.add_patch(
-                Rectangle((bx, by), BOOST_BAR_LEN, 60, fc="white", ec="#666", lw=0.5, zorder=7)
-            )
+            top.add_patch(Rectangle((bx, by), right, 60, fc="white", ec="#666", lw=0.5, zorder=7))
         )
         self._add(
-            top.add_patch(
-                Rectangle((bx, by), BOOST_BAR_LEN * frac, 60, fc=color, ec="none", zorder=8)
-            )
+            top.add_patch(Rectangle((bx, by), right * frac, 60, fc=color, ec="none", zorder=8))
         )
         boost = "?" if np.isnan(car.boost) else f"{car.boost:.0f}"
         if z > CAR_Z_LABEL:
             boost += f"  z {z:.0f}"
-        self._text(top, bx + BOOST_BAR_LEN + 40, by + 30, boost, va="center", fontsize=6)
+        tx = bx + right + SCREEN_RIGHT_X * 40
+        self._text(top, tx, by + 30, boost, va="center", fontsize=6)
         if label_dy:  # stacked label: leader line back to the car
             self._add(top.plot([x, x], [y + 60, by], color="#888", lw=0.5, zorder=5)[0])
         # Side view: a dot plus a nose line from the forward vector's (y, z).
@@ -497,7 +499,8 @@ class Renderer:
             top.add_patch(Circle((x, y), r, fc=(1, 1, 1, 0.55), ec="k", lw=1.2, zorder=zorder))
         )
         if z > BALL_Z_LABEL:
-            self._text(top, x + r + 60, y, f"z {z:.0f}", va="center", fontsize=6, color="#333")
+            tx = x + SCREEN_RIGHT_X * (r + 60)
+            self._text(top, tx, y, f"z {z:.0f}", va="center", fontsize=6, color="#333")
         self._add(side.add_patch(Circle((y, z), BALL_RADIUS, fc="white", ec="k", lw=1, zorder=7)))
 
     def _draw_mark(self, mark: Mark, alpha: float) -> None:
@@ -509,7 +512,8 @@ class Renderer:
         if mark.kind == "demo":
             self._add(top.plot(x, y, marker="*", ms=22, color=DEMO_COLOR, alpha=alpha, zorder=8)[0])
             label = f"demo: {names[0]} → {names[1]}"
-            self._text(top, x + 250, y - 250, label, color=DEMO_COLOR, alpha=alpha, fontsize=8)
+            tx = x + SCREEN_RIGHT_X * 250
+            self._text(top, tx, y - 250, label, color=DEMO_COLOR, alpha=alpha, fontsize=8)
             return
         if mark.kind == "teammate":
             ring = Circle((x, y), 320, fill=False, ec=TEAMMATE_COLOR, lw=2, ls="--", alpha=alpha)
