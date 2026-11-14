@@ -182,7 +182,7 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 - `entities.parquet` is 96% of the cache. zstd or float32 could shrink it if storage ever matters (Phase 5); not needed now.
 - Verified: `scripts/events.py ... --clock 3:47` output is identical from cache and from a fresh parse; appending a byte to a copy of a replay gives `hash changed` and a re-parse.
 
-### 1.5 2D top-down renderer `[IN PROGRESS]`
+### 1.5 2D top-down renderer `[DONE]`
 **Goal:** See any moment of the game to validate the data by eye.
 - [x] `src/rldr/viz/field.py`: draw field outline, goals, big boost pads (all 34 pads, to scale)
 - [x] Draw ball and cars at a given clock time (team colors, name labels, boost amount, velocity arrows)
@@ -190,11 +190,11 @@ Status tags: `[TODO]` · `[IN PROGRESS]` · `[DONE]` · `[BLOCKED]`
 - [x] Clip mode: `--clock M:SS --seconds 5` saves a GIF/MP4 of the window with short trails
 - [x] Side-view inset (y vs z); pitch/roll signs from 1.2 checked (pitch flipped, see 1.2 Notes)
 - [x] Tests: field geometry, window rules, headless PNG/GIF output, 2C98 moments
-- [ ] Ari checks the renders in `out/` (3:06, 3:47, 0:38, opening kickoff)
+- [x] Ari checks the renders in `out/` (3:06, 3:47, 0:38, opening kickoff)
 
 **Done when:** Ari checks 2+ moments from NOTES.md and they look right.
 **Depends on:** 1.4
-**Notes:** Built 2026-11-12; waiting on Ari's visual check. 28 new tests (`tests/test_viz_field.py`, `tests/test_viz_render.py`), 190 pass in total.
+**Notes:** Done 2026-11-14: Ari checked 3:06, 3:47, 0:38 and the opening kickoff after the mirror fix and they look right. 28 new tests (`tests/test_viz_field.py`, `tests/test_viz_render.py`), 190 pass in total.
 - **Mirror fix (2026-11-14, Ari):** the first renders drew +x to the right, so the field came out mirrored. Ari: the 0:38 play (x ~ -2200 to -2500) was on the RIGHT side. RL uses Unreal's left-handed axes, so facing Orange's goal from Blue's, +x is on the left. The top view now draws +x on the screen's left (`field.SCREEN_RIGHT_X = -1`, `set_top_xlim`), so it looks like the field from Blue's end. Horizontal label offsets use screen-right; boost bars still fill left to right on screen. The same fact flipped `roll` in 1.2 (see 1.2 Notes). Detectors never cared (the touch/surface logic only uses |x|).
 - **Modules:** `rldr.viz.field` (constants + `draw_field` / `draw_side_field`), `rldr.viz.scene` (`ReplayView`: per-entity numpy arrays built once from `load_replay()`, `state(frame)`, touch/demo `marks`; `Renderer`; `render_snapshot`), `rldr.viz.clip` (`select_frames`, `render_clip`). CLI: `scripts/render.py` (see CLAUDE.md Commands).
 - **Field:** octagon from `SIDE_WALL_X 4096`, `BACK_WALL_Y 5120` and the corner plane |x|+|y| = 8064 (45° cuts). Goal mouth ±893, net box 880 deep (I read "goal box" as the net, since there's no painted box in the data), center circle r 1000 (cosmetic). Blue goal at the bottom, +x on the screen's left (see Mirror fix). Pads come from the replay: `meta["boost_pads"]` (new, from `fd["boost_pads"]`, sorted by y, x). `STANDARD_PADS` is the fallback and matches both replays exactly.
